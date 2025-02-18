@@ -8,6 +8,8 @@ import sp.sistemaspalacios.api_chronos.entity.employeeAttendance.EmployeeAttenda
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.service.employeeAttendance.EmployeeAttendanceService;
 
+import java.util.Date;
+
 @RestController
 @RequestMapping("/api/attendance")
 public class EmployeeAttendanceController {
@@ -31,5 +33,30 @@ public class EmployeeAttendanceController {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
+
+    @PostMapping("/register-manual")
+    public ResponseEntity<?> registerManualAttendance(@RequestBody ManualAttendanceRequest request) {
+        try {
+            EmployeeAttendance attendance = service.registerManualAttendance(
+                    request.scheduleId,
+                    request.type,
+                    request.timestamp,
+                    request.message // Se usará el campo message para la justificación
+            );
+            return ResponseEntity.ok(attendance);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
+    }
+
+    // Clase interna para recibir el JSON en la petición
+    public static class ManualAttendanceRequest {
+        public Long scheduleId;
+        public AttendanceType type;
+        public Date timestamp; // Fecha y hora de la marcación manual
+        public String message; // Justificación de la marcación manual
+    }
+
+
 }
 

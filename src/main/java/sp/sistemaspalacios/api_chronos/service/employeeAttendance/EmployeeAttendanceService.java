@@ -87,6 +87,28 @@ public class EmployeeAttendanceService {
         return repository.save(attendance);
     }
 
+    public EmployeeAttendance registerManualAttendance(Long scheduleId, AttendanceType type, Date timestamp, String message) {
+        // Buscar el horario del empleado
+        EmployeeSchedule schedule = scheduleRepository.findById(scheduleId)
+                .orElseThrow(() -> new IllegalArgumentException("Horario no encontrado"));
+
+        // Validar que la marcación manual no sea en el futuro
+        if (timestamp.after(new Date())) {
+            throw new IllegalArgumentException("La fecha de marcación no puede ser en el futuro.");
+        }
+
+        // Crear y registrar la asistencia manual
+        EmployeeAttendance attendance = new EmployeeAttendance();
+        attendance.setEmployeeSchedule(schedule);
+        attendance.setType(type);
+        attendance.setTimestamp(timestamp);
+        attendance.setIsLate(true); // Se asume que si se registra manualmente, es con retraso
+        attendance.setMessage(message != null ? message : "Marcación manual realizada por Gestión Humana");
+
+        return repository.save(attendance);
+    }
+
+
     public List<EmployeeAttendance> getAttendancesBySchedule(EmployeeSchedule schedule) {
         return repository.findByEmployeeSchedule(schedule);
     }
