@@ -188,4 +188,16 @@ public class EmployeeScheduleService {
             throw new IllegalArgumentException("La fecha de inicio debe ser anterior a la fecha de fin.");
         }
     }
+
+    public List<EmployeeScheduleDTO> getSchedulesByEmployeeIds(List<Long> employeeIds) {
+        if (employeeIds == null || employeeIds.isEmpty()) {
+            throw new IllegalArgumentException("La lista de Employee IDs no puede estar vacía.");
+        }
+
+        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeIdIn(employeeIds);
+        return schedules.stream()
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+    }
+
 }

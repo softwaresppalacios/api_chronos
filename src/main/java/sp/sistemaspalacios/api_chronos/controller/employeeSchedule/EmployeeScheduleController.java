@@ -109,4 +109,9 @@ public class EmployeeScheduleController {
     public ResponseEntity<String> handleIllegalArgumentException(IllegalArgumentException ex) {
         return ResponseEntity.badRequest().body(ex.getMessage());
     }
+
+    @GetMapping("/by-employee-ids")
+    public List<EmployeeScheduleDTO> getSchedulesByEmployeeIds(@RequestParam List<Long> employeeIds) {
+        return employeeScheduleService.getSchedulesByEmployeeIds(employeeIds);
+    }
 }
