@@ -8,16 +8,14 @@ import sp.sistemaspalacios.api_chronos.entity.employeeAttendance.EmployeeAttenda
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.service.employeeAttendance.EmployeeAttendanceService;
 
-
-import java.util.List;
-
-
 @RestController
 @RequestMapping("/api/attendance")
 public class EmployeeAttendanceController {
+
     @Autowired
     private EmployeeAttendanceService service;
 
+    // Clase interna para recibir el JSON en la petición
     public static class AttendanceRequest {
         public Long scheduleId;
         public AttendanceType type;
@@ -26,19 +24,12 @@ public class EmployeeAttendanceController {
     @PostMapping("/register")
     public ResponseEntity<?> registerAttendance(@RequestBody AttendanceRequest request) {
         try {
-            EmployeeSchedule schedule = new EmployeeSchedule();
-            schedule.setId(request.scheduleId);
-            EmployeeAttendance attendance = service.registerAttendance(schedule, request.type);
+            // Llamar al servicio con el ID en lugar de un objeto EmployeeSchedule
+            EmployeeAttendance attendance = service.registerAttendance(request.scheduleId, request.type);
             return ResponseEntity.ok(attendance);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
-
-    @GetMapping("/schedule/{id}")
-    public ResponseEntity<List<EmployeeAttendance>> getAttendancesBySchedule(@PathVariable Long id) {
-        EmployeeSchedule schedule = new EmployeeSchedule();
-        schedule.setId(id);
-        return ResponseEntity.ok(service.getAttendancesBySchedule(schedule));
-    }
 }
+
