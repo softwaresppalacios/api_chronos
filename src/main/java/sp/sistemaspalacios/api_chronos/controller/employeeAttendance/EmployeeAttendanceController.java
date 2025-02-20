@@ -5,7 +5,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.entity.employeeAttendance.AttendanceType;
 import sp.sistemaspalacios.api_chronos.entity.employeeAttendance.EmployeeAttendance;
-import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.service.employeeAttendance.EmployeeAttendanceService;
 
 import java.util.Date;

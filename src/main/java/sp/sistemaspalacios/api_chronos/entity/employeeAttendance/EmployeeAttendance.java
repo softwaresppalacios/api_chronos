@@ -2,11 +2,8 @@ package sp.sistemaspalacios.api_chronos.entity.employeeAttendance;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 
-import java.sql.Time;
 import java.util.Date;
 
 @Entity

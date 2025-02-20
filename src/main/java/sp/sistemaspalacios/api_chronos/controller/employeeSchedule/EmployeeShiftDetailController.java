@@ -1,10 +1,8 @@
 package sp.sistemaspalacios.api_chronos.controller.employeeSchedule;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeShiftDetail;
-import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.EmployeeShiftDetailService;
 
 import java.sql.Time;

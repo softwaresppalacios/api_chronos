@@ -7,9 +7,7 @@ import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 
-import java.util.Date;
 import java.util.List;
-import java.util.Optional;
 
 @Service
 public class ShiftsService {
