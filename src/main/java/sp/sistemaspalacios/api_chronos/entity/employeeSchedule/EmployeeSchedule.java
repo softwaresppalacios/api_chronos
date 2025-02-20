@@ -16,8 +16,8 @@ public class EmployeeSchedule {
 
     private Long employeeId;
 
-    @ManyToOne
-    @JoinColumn(name = "shift_id", referencedColumnName = "id", insertable = false, updatable = false)
+    @ManyToOne(fetch = FetchType.EAGER) // Cargar el turno automáticamente
+    @JoinColumn(name = "shift_id", referencedColumnName = "id", nullable = false)
     private Shifts shift;
 
     @Temporal(TemporalType.DATE)
@@ -34,3 +34,4 @@ public class EmployeeSchedule {
     @Temporal(TemporalType.TIMESTAMP)
     private Date updatedAt;
 }
+

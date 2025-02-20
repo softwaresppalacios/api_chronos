@@ -27,8 +27,7 @@ public class Shifts {
     @Column(name = "dependency_id")
     private Long dependencyId;
 
-    @OneToMany(mappedBy = "shift", cascade = CascadeType.ALL, orphanRemoval = true)
-    @JsonManagedReference
+    @OneToMany(mappedBy = "shift", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<ShiftDetail> shiftDetails;
 
     @Column(name = "created_at", nullable = false, updatable = false)
