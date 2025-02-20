@@ -1,7 +1,6 @@
 package sp.sistemaspalacios.api_chronos.service.employeeSchedule;
 
 import jakarta.transaction.Transactional;
-import org.hibernate.Hibernate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -17,7 +16,6 @@ import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 
 import java.util.Date;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
