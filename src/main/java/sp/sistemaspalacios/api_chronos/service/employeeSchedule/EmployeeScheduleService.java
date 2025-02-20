@@ -1,6 +1,7 @@
 package sp.sistemaspalacios.api_chronos.service.employeeSchedule;
 
 import jakarta.transaction.Transactional;
+import org.hibernate.Hibernate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -44,11 +45,15 @@ public class EmployeeScheduleService {
     }
 
     /** 🔹 Obtiene un horario por su ID */
+    @Transactional
     public EmployeeScheduleDTO getEmployeeScheduleById(Long id) {
-        EmployeeSchedule schedule = employeeScheduleRepository.findById(id)
+        EmployeeSchedule schedule = employeeScheduleRepository.findByIdWithShift(id)
                 .orElseThrow(() -> new ResourceNotFoundException("EmployeeSchedule not found with id: " + id));
+
         return convertToDTO(schedule);
     }
+
+
 
     /** 🔹 Obtiene los horarios de un empleado por su ID */
     public List<EmployeeScheduleDTO> getSchedulesByEmployeeId(Long employeeId) {
@@ -77,8 +82,19 @@ public class EmployeeScheduleService {
     public EmployeeSchedule createEmployeeSchedule(EmployeeSchedule schedule) {
         validateSchedule(schedule);
         schedule.setCreatedAt(new Date());
+
+        // 🔹 Asegurarse de que el objeto shift se recupera completamente
+        if (schedule.getShift() != null && schedule.getShift().getId() != null) {
+            Shifts shift = shiftsRepository.findById(schedule.getShift().getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Shift not found with id: " + schedule.getShift().getId()));
+            schedule.setShift(shift);
+        } else {
+            throw new IllegalArgumentException("Shift ID no puede ser nulo.");
+        }
+
         return employeeScheduleRepository.save(schedule);
     }
+
 
     /** 🔹 Actualiza un horario de empleado */
     @Transactional
