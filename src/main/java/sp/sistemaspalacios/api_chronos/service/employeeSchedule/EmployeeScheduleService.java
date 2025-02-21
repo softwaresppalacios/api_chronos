@@ -214,4 +214,19 @@ public class EmployeeScheduleService {
                 .collect(Collectors.toList());
     }
 
+    /** 🔹 Obtiene los horarios dentro de un rango de fechas */
+    public List<EmployeeScheduleDTO> getSchedulesByDateRange(Date startDate, Date endDate) {
+        if (startDate == null || endDate == null) {
+            throw new IllegalArgumentException("Las fechas de inicio y fin son obligatorias.");
+        }
+        if (startDate.after(endDate)) {
+            throw new IllegalArgumentException("La fecha de inicio debe ser anterior a la fecha de fin.");
+        }
+
+        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByDateRange(startDate, endDate);
+        return schedules.stream()
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+    }
+
 }

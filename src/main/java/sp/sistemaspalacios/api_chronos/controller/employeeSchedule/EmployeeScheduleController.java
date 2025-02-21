@@ -1,5 +1,6 @@
 package sp.sistemaspalacios.api_chronos.controller.employeeSchedule;
 
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
@@ -7,6 +8,7 @@ import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.EmployeeScheduleService;
 
+import java.util.Date;
 import java.util.List;
 
 @RestController
@@ -113,4 +115,15 @@ public class EmployeeScheduleController {
     public List<EmployeeScheduleDTO> getSchedulesByEmployeeIds(@RequestParam List<Long> employeeIds) {
         return employeeScheduleService.getSchedulesByEmployeeIds(employeeIds);
     }
+
+    /** 🔹 Obtiene los horarios dentro de un rango de fechas */
+    @GetMapping("/by-date-range")
+    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDateRange(
+            @RequestParam("startDate") @DateTimeFormat(pattern = "yyyy-MM-dd") Date startDate,
+            @RequestParam("endDate") @DateTimeFormat(pattern = "yyyy-MM-dd") Date endDate) {
+
+        List<EmployeeScheduleDTO> schedules = employeeScheduleService.getSchedulesByDateRange(startDate, endDate);
+        return ResponseEntity.ok(schedules);
+    }
+
 }
