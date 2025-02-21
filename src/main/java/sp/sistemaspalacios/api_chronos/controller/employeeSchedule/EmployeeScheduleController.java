@@ -120,7 +120,7 @@ public class EmployeeScheduleController {
     @GetMapping("/by-date-range")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDateRange(
             @RequestParam("startDate") @DateTimeFormat(pattern = "yyyy-MM-dd") Date startDate,
-            @RequestParam("endDate") @DateTimeFormat(pattern = "yyyy-MM-dd") Date endDate) {
+            @RequestParam(value = "endDate", required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") Date endDate) {
 
         List<EmployeeScheduleDTO> schedules = employeeScheduleService.getSchedulesByDateRange(startDate, endDate);
         return ResponseEntity.ok(schedules);
