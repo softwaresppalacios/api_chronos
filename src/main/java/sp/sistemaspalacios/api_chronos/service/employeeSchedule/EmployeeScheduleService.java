@@ -182,7 +182,7 @@ public class EmployeeScheduleService {
                 dependency,
                 position,
                 schedule.getStartDate().toString(),
-                schedule.getEndDate().toString(),
+                schedule.getEndDate() != null ? schedule.getEndDate().toString() : null,  // Manejo de null
                 shiftDTO
         );
     }
@@ -195,10 +195,10 @@ public class EmployeeScheduleService {
         if (schedule.getShift() == null || schedule.getShift().getId() == null || schedule.getShift().getId() <= 0) {
             throw new IllegalArgumentException("Shift ID es obligatorio y debe ser un número válido.");
         }
-        if (schedule.getStartDate() == null || schedule.getEndDate() == null) {
-            throw new IllegalArgumentException("Las fechas de inicio y fin son obligatorias.");
+        if (schedule.getStartDate() == null) {
+            throw new IllegalArgumentException("La fecha de inicio es obligatoria.");
         }
-        if (schedule.getStartDate().after(schedule.getEndDate())) {
+        if (schedule.getEndDate() != null && schedule.getStartDate().after(schedule.getEndDate())) {
             throw new IllegalArgumentException("La fecha de inicio debe ser anterior a la fecha de fin.");
         }
     }
