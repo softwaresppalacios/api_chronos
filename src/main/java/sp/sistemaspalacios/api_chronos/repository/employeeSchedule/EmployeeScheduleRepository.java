@@ -23,5 +23,9 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
     @Query("SELECT es FROM EmployeeSchedule es WHERE FUNCTION('DATE', es.startDate) >= :startDate AND FUNCTION('DATE', es.endDate) <= :endDate")
     List<EmployeeSchedule> findByDateRange(@Param("startDate") Date startDate, @Param("endDate") Date endDate);
+
+    @Query("SELECT e FROM EmployeeSchedule e WHERE e.startDate >= :startDate AND e.endDate IS NULL")
+    List<EmployeeSchedule> findByStartDateAndNullEndDate(@Param("startDate") Date startDate);
+
 }
 
