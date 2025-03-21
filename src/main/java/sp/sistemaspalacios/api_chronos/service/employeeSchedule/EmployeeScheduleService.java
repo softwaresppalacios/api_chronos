@@ -9,11 +9,19 @@ import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
 import sp.sistemaspalacios.api_chronos.dto.ShiftDetailDTO;
 import sp.sistemaspalacios.api_chronos.dto.ShiftsDTO;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
+import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
+import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleTimeBlock;
+import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
 import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleDayRepository;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleRepository;
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 
+import java.sql.Time;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -25,13 +33,16 @@ public class EmployeeScheduleService {
     private final EmployeeScheduleRepository employeeScheduleRepository;
     private final ShiftsRepository shiftsRepository;
     private final RestTemplate restTemplate;
+    private final EmployeeScheduleDayRepository employeeScheduleDayRepository;
 
     public EmployeeScheduleService(EmployeeScheduleRepository employeeScheduleRepository,
                                    ShiftsRepository shiftsRepository,
-                                   RestTemplate restTemplate) {
+                                   RestTemplate restTemplate,
+                                   EmployeeScheduleDayRepository employeeScheduleDayRepository) {
         this.employeeScheduleRepository = employeeScheduleRepository;
         this.shiftsRepository = shiftsRepository;
         this.restTemplate = restTemplate;
+        this.employeeScheduleDayRepository = employeeScheduleDayRepository;
     }
 
     /** 🔹 Obtiene todos los horarios de empleados */
@@ -75,7 +86,24 @@ public class EmployeeScheduleService {
                 .collect(Collectors.toList());
     }
 
-    /** 🔹 Crea un nuevo horario de empleado */
+    /** 🔹 Crea un nuevo horario de empleado
+    /**@Transactional
+    public EmployeeSchedule createEmployeeSchedule(EmployeeSchedule schedule) {
+        validateSchedule(schedule);
+        schedule.setCreatedAt(new Date());
+
+        // 🔹 Asegurarse de que el objeto shift se recupera completamente
+        if (schedule.getShift() != null && schedule.getShift().getId() != null) {
+            Shifts shift = shiftsRepository.findById(schedule.getShift().getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Shift not found with id: " + schedule.getShift().getId()));
+            schedule.setShift(shift); // Asignar el objeto shift completo
+        } else {
+            throw new IllegalArgumentException("Shift ID no puede ser nulo.");
+        }
+
+        return employeeScheduleRepository.save(schedule);
+    }*/
+
     @Transactional
     public EmployeeSchedule createEmployeeSchedule(EmployeeSchedule schedule) {
         validateSchedule(schedule);
@@ -85,13 +113,67 @@ public class EmployeeScheduleService {
         if (schedule.getShift() != null && schedule.getShift().getId() != null) {
             Shifts shift = shiftsRepository.findById(schedule.getShift().getId())
                     .orElseThrow(() -> new ResourceNotFoundException("Shift not found with id: " + schedule.getShift().getId()));
-            schedule.setShift(shift);
+            schedule.setShift(shift); // Asignar el objeto shift completo
         } else {
             throw new IllegalArgumentException("Shift ID no puede ser nulo.");
         }
 
-        return employeeScheduleRepository.save(schedule);
+        // Guardar el horario de empleado
+        EmployeeSchedule created = employeeScheduleRepository.save(schedule);
+
+        // Generar y guardar los días y bloques de horarios
+        generateAndSaveDaysWithTimeBlocks(created);
+
+        return created;
     }
+
+    private void generateAndSaveDaysWithTimeBlocks(EmployeeSchedule schedule) {
+        LocalDate startDate = schedule.getStartDate().toInstant()
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate();
+        LocalDate endDate = schedule.getEndDate().toInstant()
+                .atZone(ZoneId.systemDefault())
+                .toLocalDate();
+
+        // Recuperar los detalles del turno (shiftDetails)
+        List<ShiftDetail> shiftDetails = schedule.getShift().getShiftDetails();
+
+        while (!startDate.isAfter(endDate)) {
+            // Crear el día
+            EmployeeScheduleDay day = new EmployeeScheduleDay();
+            day.setEmployeeSchedule(schedule);
+            day.setDate(java.sql.Date.valueOf(startDate));
+            day.setDayOfWeek(startDate.getDayOfWeek().getValue());
+            day.setCreatedAt(new Date());
+
+            // Filtrar los detalles del turno por el día de la semana
+            List<EmployeeScheduleTimeBlock> timeBlocks = new ArrayList<>();
+            for (ShiftDetail detail : shiftDetails) {
+                if (detail.getDayOfWeek() == startDate.getDayOfWeek().getValue()) {
+                    EmployeeScheduleTimeBlock block = new EmployeeScheduleTimeBlock();
+                    block.setEmployeeScheduleDay(day);
+                    block.setStartTime(Time.valueOf(detail.getStartTime() + ":00")); // Convertir a Time
+                    block.setEndTime(Time.valueOf(detail.getEndTime() + ":00")); // Convertir a Time
+                    block.setCreatedAt(new Date());
+                    timeBlocks.add(block);
+                }
+            }
+
+            // Asignar los bloques de horarios al día
+            day.setTimeBlocks(timeBlocks);
+
+            // Guardar el día y los bloques de horarios
+            employeeScheduleDayRepository.save(day);
+
+            // Avanzar al siguiente día
+            startDate = startDate.plusDays(1);
+        }
+    }
+
+
+
+
+
 
 
     /** 🔹 Actualiza un horario de empleado */

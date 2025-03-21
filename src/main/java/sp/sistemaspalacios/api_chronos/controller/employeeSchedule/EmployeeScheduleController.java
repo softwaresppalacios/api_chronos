@@ -1,20 +1,25 @@
 package sp.sistemaspalacios.api_chronos.controller.employeeSchedule;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
+import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
+import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleTimeBlock;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleDayRepository;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.EmployeeScheduleService;
 
-import java.util.Date;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/employee-schedules")
 public class EmployeeScheduleController {
-
+    @Autowired
+    private EmployeeScheduleDayRepository employeeScheduleDayRepository;
     private final EmployeeScheduleService employeeScheduleService;
 
     public EmployeeScheduleController(EmployeeScheduleService employeeScheduleService) {
@@ -58,15 +63,65 @@ public class EmployeeScheduleController {
         return ResponseEntity.ok(schedules);
     }
 
-    /** 🔹 Crea un nuevo horario de empleado */
+
     @PostMapping
     public ResponseEntity<?> createSchedule(@RequestBody EmployeeSchedule schedule) {
         try {
+            // Guardar el horario en la base de datos
             EmployeeSchedule created = employeeScheduleService.createEmployeeSchedule(schedule);
-            return ResponseEntity.ok(created);
+
+            // Construir la respuesta final
+            Map<String, Object> response = new HashMap<>();
+            response.put("id", created.getId());
+            response.put("employeeId", created.getEmployeeId());
+            response.put("shift", created.getShift());
+            response.put("startDate", created.getStartDate());
+            response.put("endDate", created.getEndDate());
+            response.put("createdAt", created.getCreatedAt());
+            response.put("updatedAt", created.getUpdatedAt());
+
+            // Obtener los días y bloques de horarios
+            List<Map<String, Object>> days = employeeScheduleDayRepository.findByEmployeeSchedule_Id(created.getId())
+                    .stream()
+                    .map(this::convertDayToMap)
+                    .collect(Collectors.toList());
+
+            response.put("days", days);
+
+            return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
+    }
+    private Map<String, Object> convertDayToMap(EmployeeScheduleDay day) {
+        Map<String, Object> dayMap = new HashMap<>();
+        dayMap.put("id", day.getId());
+        dayMap.put("date", day.getDate());
+        dayMap.put("dayOfWeek", day.getDayOfWeek());
+
+        // Convertir los bloques de horarios
+        List<Map<String, String>> timeBlocks = day.getTimeBlocks()
+                .stream()
+                .map(this::convertTimeBlockToMap)
+                .collect(Collectors.toList());
+
+        dayMap.put("timeBlocks", timeBlocks);
+
+        return dayMap;
+    }
+
+
+
+
+
+
+
+
+    private Map<String, String> convertTimeBlockToMap(EmployeeScheduleTimeBlock block) {
+        Map<String, String> blockMap = new HashMap<>();
+        blockMap.put("startTime", block.getStartTime().toString());
+        blockMap.put("endTime", block.getEndTime().toString());
+        return blockMap;
     }
 
     /** 🔹 Actualiza un horario de empleado */
