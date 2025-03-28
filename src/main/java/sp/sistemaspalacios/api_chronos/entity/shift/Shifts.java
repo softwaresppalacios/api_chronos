@@ -37,4 +37,6 @@ public class Shifts {
     @Temporal(TemporalType.TIMESTAMP)
     @UpdateTimestamp  // <-- Agregado para actualizar automáticamente la fecha de modificación
     private Date updatedAt;
+
+
 }

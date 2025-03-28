@@ -21,7 +21,7 @@ public class EmployeeScheduleDay {
     private Integer dayOfWeek;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "employee_schedule_id", nullable = false)
+    @JoinColumn(name = " employee_schedule_id ", nullable = false)
     private EmployeeSchedule employeeSchedule;
 
     @OneToMany(mappedBy = "employeeScheduleDay", cascade = CascadeType.ALL, fetch = FetchType.LAZY)

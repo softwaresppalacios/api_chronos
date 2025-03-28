@@ -1,10 +1,12 @@
 package sp.sistemaspalacios.api_chronos.repository.employeeSchedule;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
+import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
 
 import java.util.Date;
 import java.util.List;
@@ -16,7 +18,6 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
     List<EmployeeSchedule> findByShiftId(Long shiftId);
 
-    List<EmployeeSchedule> findByEmployeeIdIn(List<Long> employeeIds);
 
     @Query("SELECT es FROM EmployeeSchedule es JOIN FETCH es.shift WHERE es.id = :id")
     Optional<EmployeeSchedule> findByIdWithShift(@Param("id") Long id);
@@ -56,6 +57,56 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
     // Opción 3: Similar pero con otro nombre
     @Query("SELECT es FROM EmployeeSchedule es WHERE es.employeeId IN :employeeIds")
     List<EmployeeSchedule> findSchedulesForEmployees(@Param("employeeIds") List<Long> employeeIds);
+
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "LEFT JOIN FETCH es.days d " +
+            "LEFT JOIN FETCH d.timeBlocks " +
+            "WHERE es.employeeId IN :employeeIds")
+    List<EmployeeSchedule> findByEmployeeIdInWithDaysAndTimeBlocks(@Param("employeeIds") List<Long> employeeIds);
+
+
+
+
+
+
+
+
+
+
+
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "LEFT JOIN FETCH es.days d " +
+            "WHERE es.employeeId IN :employeeIds AND " +
+            "EXISTS (SELECT 1 FROM EmployeeScheduleTimeBlock t WHERE t.employeeScheduleDay = d)")
+    List<EmployeeSchedule> findByEmployeeIdIn(@Param("employeeIds") List<Long> employeeIds);
+
+
+
+
+
+
+
+
+
+
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "LEFT JOIN FETCH es.days d " +
+            "WHERE es.employeeId IN :employeeIds " +
+            "ORDER BY es.id, d.date")
+    List<EmployeeSchedule> findByEmployeeIdInWithDays(@Param("employeeIds") List<Long> employeeIds);
+
+    // Consulta adicional para cargar los timeBlocks en batch
+    @Query("SELECT d FROM EmployeeScheduleDay d " +
+            "LEFT JOIN FETCH d.timeBlocks t " +
+            "WHERE d.employeeSchedule.id IN :scheduleIds " +
+            "ORDER BY d.date, t.startTime")
+    List<EmployeeScheduleDay> findDaysWithTimeBlocksByScheduleIds(@Param("scheduleIds") List<Long> scheduleIds);
 }
+
+
+
+
+
+
 
 

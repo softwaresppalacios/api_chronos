@@ -356,10 +356,16 @@ public class EmployeeScheduleController {
     }
 
     @GetMapping("/by-employee-ids")
-    public List<EmployeeScheduleDTO> getSchedulesByEmployeeIds(@RequestParam List<Long> employeeIds) {
-        return employeeScheduleService.getSchedulesByEmployeeIds(employeeIds);
-    }
+    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByEmployeeIds(
+            @RequestParam List<Long> employeeIds) {
 
+        try {
+            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByEmployeeIds(employeeIds);
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
     /** 🔹 Obtiene los horarios dentro de un rango de fechas */
     @GetMapping("/by-date-range")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDateRange(
