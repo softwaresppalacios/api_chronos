@@ -3,6 +3,7 @@ package sp.sistemaspalacios.api_chronos.entity.employeeSchedule;
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.time.ZoneId;
 import java.util.Date;
 import java.util.List;
 
@@ -14,17 +15,21 @@ public class EmployeeScheduleDay {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne
-    @JoinColumn(name = "employee_schedule_id")
-    private EmployeeSchedule employeeSchedule;
-
     @Temporal(TemporalType.DATE)
     private Date date;
 
     private Integer dayOfWeek;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "employee_schedule_id", nullable = false)
+    private EmployeeSchedule employeeSchedule;
+
     @OneToMany(mappedBy = "employeeScheduleDay", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
     private List<EmployeeScheduleTimeBlock> timeBlocks;
+
+    // Nuevo campo para days_parent_id
+    @Column(name = "days_parent_id")
+    private Long daysParentId;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     @Temporal(TemporalType.TIMESTAMP)
@@ -33,4 +38,12 @@ public class EmployeeScheduleDay {
     @Column(name = "updated_at")
     @Temporal(TemporalType.TIMESTAMP)
     private Date updatedAt;
+
+    public ZoneId getDaysParent() {
+        return null;
+    }
+
+    public Long getParentDayId() {
+        return null;
+    }
 }

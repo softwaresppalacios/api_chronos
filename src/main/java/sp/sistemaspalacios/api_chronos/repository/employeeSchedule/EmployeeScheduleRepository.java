@@ -27,5 +27,35 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
     @Query("SELECT e FROM EmployeeSchedule e WHERE e.startDate >= :startDate AND e.endDate IS NULL")
     List<EmployeeSchedule> findByStartDateAndNullEndDate(@Param("startDate") Date startDate);
 
+
+
+
+    // Consulta para verificar existencia
+    @Query("SELECT CASE WHEN COUNT(es) > 0 THEN true ELSE false END " +
+            "FROM EmployeeSchedule es " +
+            "WHERE es.employeeId = :employeeId " +
+            "AND :date BETWEEN es.startDate AND es.endDate")
+    boolean existsByEmployeeIdAndDate(@Param("employeeId") Long employeeId,
+                                      @Param("date") Date date);
+
+    // Nueva consulta para buscar por múltiples IDs
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.employeeId IN :employeeIds")
+    List<EmployeeSchedule> findByEmployeeIds(@Param("employeeIds") List<Long> employeeIds);
+
+
+    List<EmployeeSchedule> findByDaysParentId(Long daysParentId);
+    List<EmployeeSchedule> findByEmployeeIdAndDaysParentId(Long employeeId, Long daysParentId);
+    List<EmployeeSchedule> findByStartDateBetween(Date startDate, Date endDate);
+
+
+    // O si necesitas información del empleado (JOIN)
+    // Opción 2: Con JOIN al empleado (asegúrate que es.employee exista)
+    //@Query("SELECT es FROM EmployeeSchedule es JOIN FETCH es.employee WHERE es.employee.id IN :employeeIds")
+    //List<EmployeeSchedule> findSchedulesForEmployees(@Param("employeeIds") List<Long> employeeIds);
+
+    // Opción 3: Similar pero con otro nombre
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.employeeId IN :employeeIds")
+    List<EmployeeSchedule> findSchedulesForEmployees(@Param("employeeIds") List<Long> employeeIds);
 }
+
 

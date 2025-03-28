@@ -28,6 +28,9 @@ public class EmployeeScheduleDTO {
         this.shift = shift;
     }
 
+    public EmployeeScheduleDTO(Long id, Long numberId, String firstName, String secondName, String surName, String secondSurname, String dependency, String position, String string, String endDate, sp.sistemaspalacios.api_chronos.service.employeeSchedule.ShiftsDTO shiftDTO) {
+    }
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 

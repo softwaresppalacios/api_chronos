@@ -28,4 +28,8 @@ public class EmployeeScheduleTimeBlock {
     @Column(name = "updated_at")
     @Temporal(TemporalType.TIMESTAMP)
     private Date updatedAt;
+
+    public Object getNumberId() {
+        return null;
+    }
 }
