@@ -523,6 +523,55 @@ public class EmployeeScheduleService {
                 .collect(Collectors.toList());
     }
 
+
+
+
+
+
+    @Transactional
+    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId) {
+        // 1. Obtener horarios con días (sin timeBlocks) filtrados por el ID de la dependencia
+        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByDependencyIdWithDays(dependencyId);
+
+        if (!schedules.isEmpty()) {
+            // 2. Obtener IDs de los horarios
+            List<Long> scheduleIds = schedules.stream()
+                    .map(EmployeeSchedule::getId)
+                    .collect(Collectors.toList());
+
+            // 3. Cargar timeBlocks en batch para todos los días
+            List<EmployeeScheduleDay> daysWithBlocks = employeeScheduleRepository
+                    .findDaysWithTimeBlocksByScheduleIds(scheduleIds);
+
+            // 4. Asociar los timeBlocks a los días correspondientes
+            Map<Long, List<EmployeeScheduleDay>> daysByScheduleId = daysWithBlocks.stream()
+                    .collect(Collectors.groupingBy(
+                            day -> day.getEmployeeSchedule().getId(),
+                            Collectors.toList()
+                    ));
+
+            schedules.forEach(schedule -> {
+                List<EmployeeScheduleDay> days = daysByScheduleId.get(schedule.getId());
+                if (days != null) {
+                    // Reemplazar la lista de días con los que tienen timeBlocks cargados
+                    schedule.getDays().clear();
+                    schedule.getDays().addAll(days);
+                }
+            });
+        }
+
+        return schedules.stream()
+                .map(this::convertToCompleteDTO)
+                .collect(Collectors.toList());
+    }
+
+
+
+
+
+
+
+
     private EmployeeScheduleDTO convertToCompleteDTO(EmployeeSchedule schedule) {
         // 1. Obtener datos del empleado desde el microservicio
         EmployeeResponse response = getEmployeeData(schedule.getEmployeeId());
@@ -567,6 +616,12 @@ public class EmployeeScheduleService {
                         .collect(Collectors.toList())
         );
     }
+
+
+
+
+
+
 
 
 

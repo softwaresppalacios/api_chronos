@@ -86,8 +86,8 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
 
 
-
-
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.shift.dependencyId = :dependencyId")
+    List<EmployeeSchedule> findByDependencyIdWithDays(@Param("dependencyId") Long dependencyId);
 
     @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
             "LEFT JOIN FETCH es.days d " +

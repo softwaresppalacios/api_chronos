@@ -366,6 +366,32 @@ public class EmployeeScheduleController {
             return ResponseEntity.badRequest().build();
         }
     }
+
+
+
+
+    @GetMapping("/by-dependency-id")
+    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDependencyId(
+            @RequestParam Long dependencyId) {  // Recibimos el ID de la dependencia como parámetro
+
+        try {
+            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(dependencyId);
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
     /** 🔹 Obtiene los horarios dentro de un rango de fechas */
     @GetMapping("/by-date-range")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDateRange(
