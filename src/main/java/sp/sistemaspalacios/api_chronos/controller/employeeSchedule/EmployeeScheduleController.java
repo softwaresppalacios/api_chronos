@@ -15,8 +15,10 @@ import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.EmployeeScheduleService;
 
+import java.sql.Time;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -372,15 +374,17 @@ public class EmployeeScheduleController {
 
     @GetMapping("/by-dependency-id")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDependencyId(
-            @RequestParam Long dependencyId) {  // Recibimos el ID de la dependencia como parámetro
-
+            @RequestParam Long dependencyId,
+            @RequestParam(required = false) String startTime) {
+        // Recibimos el ID de la dependencia como parámetro y opcionalmente la hora de inicio
         try {
-            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(dependencyId);
+            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(dependencyId, startTime);
             return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
         }
     }
+
 
 
 

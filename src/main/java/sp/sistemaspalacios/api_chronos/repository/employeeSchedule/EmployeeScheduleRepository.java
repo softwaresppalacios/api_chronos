@@ -8,6 +8,9 @@ import org.springframework.stereotype.Repository;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
 
+import java.sql.Time;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Optional;
@@ -101,6 +104,45 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             "WHERE d.employeeSchedule.id IN :scheduleIds " +
             "ORDER BY d.date, t.startTime")
     List<EmployeeScheduleDay> findDaysWithTimeBlocksByScheduleIds(@Param("scheduleIds") List<Long> scheduleIds);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.shift.id = :dependencyId")
+    List<EmployeeSchedule> findByDependencyId(@Param("dependencyId") Long dependencyId);
+
+    // Método para buscar por dependencyId y startTime
+    @Query(value = "SELECT DISTINCT es.* FROM employee_schedules es " +
+            "JOIN employee_schedule_days d ON d.employee_schedule_id = es.id " +
+            "JOIN employee_schedule_time_blocks tb ON tb.employee_schedule_day_id = d.id " +
+            "WHERE es.shift_id = :dependencyId " +
+            "AND to_char(tb.start_time, 'HH24:MI:SS') LIKE :startTimePattern",
+            nativeQuery = true)
+    List<EmployeeSchedule> findByDependencyIdAndTimeBlockStartTime(
+            @Param("dependencyId") Long dependencyId,
+            @Param("startTimePattern") String startTimePattern);
+
+    // Método para cargar días con sus timeBlocks
+
+
 }
 
 

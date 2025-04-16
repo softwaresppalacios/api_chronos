@@ -23,6 +23,7 @@ import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 import java.sql.Time;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.function.Function;
@@ -529,21 +530,29 @@ public class EmployeeScheduleService {
 
 
     @Transactional
-    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId) {
-        // 1. Obtener horarios con días (sin timeBlocks) filtrados por el ID de la dependencia
-        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByDependencyIdWithDays(dependencyId);
+    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId, Time startTime) {
+        List<EmployeeSchedule> schedules;
+
+        // Determinar qué consulta usar según si tenemos startTime o no
+        if (startTime != null) {
+            // Filtrar por dependencia y hora de inicio
+            schedules = employeeScheduleRepository.findByDependencyIdAndTimeBlockStartTime(dependencyId, String.valueOf(startTime));
+        } else {
+            // Solo filtrar por dependencia (comportamiento original)
+            schedules = employeeScheduleRepository.findByDependencyIdWithDays(dependencyId);
+        }
 
         if (!schedules.isEmpty()) {
-            // 2. Obtener IDs de los horarios
+            // Obtener IDs de los horarios
             List<Long> scheduleIds = schedules.stream()
                     .map(EmployeeSchedule::getId)
                     .collect(Collectors.toList());
 
-            // 3. Cargar timeBlocks en batch para todos los días
+            // Cargar timeBlocks en batch para todos los días
             List<EmployeeScheduleDay> daysWithBlocks = employeeScheduleRepository
                     .findDaysWithTimeBlocksByScheduleIds(scheduleIds);
 
-            // 4. Asociar los timeBlocks a los días correspondientes
+            // Asociar los timeBlocks a los días correspondientes
             Map<Long, List<EmployeeScheduleDay>> daysByScheduleId = daysWithBlocks.stream()
                     .collect(Collectors.groupingBy(
                             day -> day.getEmployeeSchedule().getId(),
@@ -565,10 +574,50 @@ public class EmployeeScheduleService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional
+    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId, String startTime) {
+        // Si startTime está presente, filtramos por dependencyId y startTime
+        List<EmployeeSchedule> schedules;
 
+        if (startTime != null && !startTime.isEmpty()) {
+            System.out.println("Buscando horarios con dependencyId=" + dependencyId + " y startTime=" + startTime);
+            schedules = employeeScheduleRepository.findByDependencyIdAndTimeBlockStartTime(dependencyId, startTime);
+        } else {
+            System.out.println("Buscando horarios solo con dependencyId=" + dependencyId);
+            schedules = employeeScheduleRepository.findByDependencyId(dependencyId);
+        }
 
+        if (!schedules.isEmpty()) {
+            // Obtener IDs de los horarios
+            List<Long> scheduleIds = schedules.stream()
+                    .map(EmployeeSchedule::getId)
+                    .collect(Collectors.toList());
 
+            // Cargar timeBlocks en batch para todos los días
+            List<EmployeeScheduleDay> daysWithBlocks = employeeScheduleRepository
+                    .findDaysWithTimeBlocksByScheduleIds(scheduleIds);
 
+            // Asociar los timeBlocks a los días correspondientes
+            Map<Long, List<EmployeeScheduleDay>> daysByScheduleId = daysWithBlocks.stream()
+                    .collect(Collectors.groupingBy(
+                            day -> day.getEmployeeSchedule().getId(),
+                            Collectors.toList()
+                    ));
+
+            schedules.forEach(schedule -> {
+                List<EmployeeScheduleDay> days = daysByScheduleId.get(schedule.getId());
+                if (days != null) {
+                    // Reemplazar la lista de días con los que tienen timeBlocks cargados
+                    schedule.getDays().clear();
+                    schedule.getDays().addAll(days);
+                }
+            });
+        }
+
+        return schedules.stream()
+                .map(this::convertToCompleteDTO)
+                .collect(Collectors.toList());
+    }
 
 
 
@@ -677,6 +726,7 @@ public class EmployeeScheduleService {
                                     .sorted(Comparator.comparing(EmployeeScheduleTimeBlock::getStartTime))
                                     .map(block -> {
                                         Map<String, String> blockMap = new LinkedHashMap<>();
+                                        blockMap.put("id", block.getId().toString());
                                         blockMap.put("startTime", block.getStartTime().toString());
                                         blockMap.put("endTime", block.getEndTime().toString());
                                         return blockMap;

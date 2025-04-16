@@ -32,4 +32,8 @@ public class EmployeeScheduleTimeBlock {
     public Object getNumberId() {
         return null;
     }
+
+    public Object getShift() {
+        return null;
+    }
 }
