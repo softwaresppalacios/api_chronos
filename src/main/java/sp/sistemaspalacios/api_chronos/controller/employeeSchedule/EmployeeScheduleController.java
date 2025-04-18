@@ -18,6 +18,7 @@ import sp.sistemaspalacios.api_chronos.service.employeeSchedule.EmployeeSchedule
 import java.sql.Time;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -375,14 +376,18 @@ public class EmployeeScheduleController {
     @GetMapping("/by-dependency-id")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDependencyId(
             @RequestParam Long dependencyId,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
             @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime) {
+
         try {
-            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(dependencyId, startTime);
+            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(dependencyId, startDate, endDate, startTime);
             return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
         }
     }
+
 
 
 

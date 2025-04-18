@@ -28,7 +28,10 @@ import java.time.ZoneId;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-
+import java.sql.Time;
+import java.util.Date;
+import java.time.LocalDate;
+import java.time.LocalTime;
 @Service
 public class EmployeeScheduleService {
 
@@ -528,66 +531,46 @@ public class EmployeeScheduleService {
 
 
 
-
     @Transactional
-    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId, Time startTime) {
+    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId, LocalDate startDate, LocalDate endDate, LocalTime startTime) {
         List<EmployeeSchedule> schedules;
+        Time sqlTime = (startTime != null) ? Time.valueOf(startTime) : null;
 
-        // Determinar qué consulta usar según si tenemos startTime o no
-        if (startTime != null) {
-            // Filtrar por dependencia y hora de inicio
-            schedules = employeeScheduleRepository.findByDependencyIdAndTimeBlockStartTime(dependencyId, startTime);
+        // Usar el método específico que filtra por todos los criterios
+        if (startDate != null && endDate != null && sqlTime != null) {
+            schedules = employeeScheduleRepository.findByDependencyIdAndDateRangeAndStartTime(
+                    dependencyId, startDate, endDate, sqlTime);
+        } else if (startDate != null && endDate != null) {
+            // Método para cuando no hay hora de inicio
+            schedules = employeeScheduleRepository.findByDependencyIdAndDateRangeNoTime(
+                    dependencyId, startDate, endDate);
+        } else if (sqlTime != null) {
+            // Método para cuando solo hay hora de inicio
+            schedules = employeeScheduleRepository.findByDependencyIdAndStartTime(
+                    dependencyId, sqlTime);
         } else {
-            // Solo filtrar por dependencia (comportamiento original)
-            schedules = employeeScheduleRepository.findByDependencyIdWithDays(dependencyId);
-        }
-
-        if (!schedules.isEmpty()) {
-            // Obtener IDs de los horarios
-            List<Long> scheduleIds = schedules.stream()
-                    .map(EmployeeSchedule::getId)
-                    .collect(Collectors.toList());
-
-            // Cargar timeBlocks en batch para todos los días
-            List<EmployeeScheduleDay> daysWithBlocks = employeeScheduleRepository
-                    .findDaysWithTimeBlocksByScheduleIds(scheduleIds);
-
-            // Asociar los timeBlocks a los días correspondientes
-            Map<Long, List<EmployeeScheduleDay>> daysByScheduleId = daysWithBlocks.stream()
-                    .collect(Collectors.groupingBy(
-                            day -> day.getEmployeeSchedule().getId(),
-                            Collectors.toList()
-                    ));
-
-            schedules.forEach(schedule -> {
-                List<EmployeeScheduleDay> days = daysByScheduleId.get(schedule.getId());
-                if (days != null) {
-                    // Reemplazar la lista de días con los que tienen timeBlocks cargados
-                    schedule.getDays().clear();
-                    schedule.getDays().addAll(days);
-                }
-            });
-        }
-
-        return schedules.stream()
-                .map(this::convertToCompleteDTO)
-                .collect(Collectors.toList());
-    }
-
-    @Transactional
-    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId, LocalTime startTime) {
-        List<EmployeeSchedule> schedules;
-
-        if (startTime != null) {
-            // 🔄 Convertir LocalTime a java.sql.Time para el repository
-            Time sqlTime = Time.valueOf(startTime);
-            System.out.println("Buscando horarios con dependencyId=" + dependencyId + " y startTime=" + sqlTime);
-            schedules = employeeScheduleRepository.findByDependencyIdAndTimeBlockStartTime(dependencyId, sqlTime);
-        } else {
-            System.out.println("Buscando horarios solo con dependencyId=" + dependencyId);
+            // Método para cuando solo hay dependencyId
             schedules = employeeScheduleRepository.findByDependencyId(dependencyId);
         }
 
+        // Ahora, vamos a asegurarnos de filtrar los días que están fuera del rango
+        if (startDate != null && endDate != null && !schedules.isEmpty()) {
+            schedules.forEach(schedule -> {
+                // Convertir LocalDate a java.util.Date para comparación
+                Date startDateUtil = java.sql.Date.valueOf(startDate);
+                Date endDateUtil = java.sql.Date.valueOf(endDate);
+
+                // Filtrar los días para mantener solo los que están dentro del rango
+                List<EmployeeScheduleDay> filteredDays = schedule.getDays().stream()
+                        .filter(day -> !day.getDate().before(startDateUtil) && !day.getDate().after(endDateUtil))
+                        .collect(Collectors.toList());
+
+                schedule.getDays().clear();
+                schedule.getDays().addAll(filteredDays);
+            });
+        }
+
+        // Procesar los horarios como antes
         if (!schedules.isEmpty()) {
             List<Long> scheduleIds = schedules.stream()
                     .map(EmployeeSchedule::getId)
@@ -595,6 +578,16 @@ public class EmployeeScheduleService {
 
             List<EmployeeScheduleDay> daysWithBlocks = employeeScheduleRepository
                     .findDaysWithTimeBlocksByScheduleIds(scheduleIds);
+
+            // Si hay un rango de fechas, filtramos también los días con bloques
+            if (startDate != null && endDate != null) {
+                Date startDateUtil = java.sql.Date.valueOf(startDate);
+                Date endDateUtil = java.sql.Date.valueOf(endDate);
+
+                daysWithBlocks = daysWithBlocks.stream()
+                        .filter(day -> !day.getDate().before(startDateUtil) && !day.getDate().after(endDateUtil))
+                        .collect(Collectors.toList());
+            }
 
             Map<Long, List<EmployeeScheduleDay>> daysByScheduleId = daysWithBlocks.stream()
                     .collect(Collectors.groupingBy(day -> day.getEmployeeSchedule().getId()));
@@ -608,10 +601,38 @@ public class EmployeeScheduleService {
             });
         }
 
+        // Finalmente, si también hay filtro de hora, asegúrate de que solo se incluyan
+        // los bloques de tiempo que cumplan con el criterio
+        if (sqlTime != null && !schedules.isEmpty()) {
+            schedules.forEach(schedule -> {
+                schedule.getDays().forEach(day -> {
+                    List<EmployeeScheduleTimeBlock> filteredBlocks = day.getTimeBlocks().stream()
+                            .filter(block -> {
+                                // Usa directamente el objeto Time que viene del bloque
+                                Time blockTime = block.getStartTime();
+                                return blockTime.compareTo(sqlTime) >= 0;
+                            })
+                            .collect(Collectors.toList());
+
+                    day.getTimeBlocks().clear();
+                    day.getTimeBlocks().addAll(filteredBlocks);
+                });
+            });
+        }
         return schedules.stream()
                 .map(this::convertToCompleteDTO)
                 .collect(Collectors.toList());
     }
+
+
+
+
+
+
+
+
+
+
 
 
     private EmployeeScheduleDTO convertToCompleteDTO(EmployeeSchedule schedule) {

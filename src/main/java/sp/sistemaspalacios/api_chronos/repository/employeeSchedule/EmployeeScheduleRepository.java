@@ -1,5 +1,6 @@
 package sp.sistemaspalacios.api_chronos.repository.employeeSchedule;
 
+import io.micrometer.common.lang.Nullable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -126,18 +127,72 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
 
 
-    @Query("SELECT es FROM EmployeeSchedule es WHERE es.shift.id = :dependencyId")
-    List<EmployeeSchedule> findByDependencyId(@Param("dependencyId") Long dependencyId);
-
+    // Para cuando todos los parámetros están presentes
     @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "JOIN es.days d " +
+            "LEFT JOIN d.timeBlocks tb " +
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND d.date >= :startDate " +
+            "AND d.date <= :endDate " +
+            "AND tb.startTime >= :startTime")
+    List<EmployeeSchedule> findByDependencyIdAndFullDateRange(
+            @Param("dependencyId") Long dependencyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("startTime") Time startTime);
+
+    // Para cuando startTime es nulo
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "JOIN es.days d " +
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND d.date >= :startDate " +
+            "AND d.date <= :endDate")
+    List<EmployeeSchedule> findByDependencyIdAndDateRangeNoTime(
+            @Param("dependencyId") Long dependencyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
+
+    // Para cuando las fechas son nulas pero tenemos startTime
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
             "JOIN es.days d " +
             "JOIN d.timeBlocks tb " +
-            "WHERE es.shift.dependencyId = :dependencyId AND tb.startTime = :startTime")
-    List<EmployeeSchedule> findByDependencyIdAndTimeBlockStartTime(
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND tb.startTime >= :startTime")
+    List<EmployeeSchedule> findByDependencyIdAndStartTime(
             @Param("dependencyId") Long dependencyId,
             @Param("startTime") Time startTime);
 
+    // Para cuando todo es nulo excepto dependencyId
+    @Query("SELECT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "WHERE s.dependencyId = :dependencyId")
+    List<EmployeeSchedule> findByDependencyId(@Param("dependencyId") Long dependencyId);
+
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "JOIN es.days d " +
+            "JOIN d.timeBlocks tb " +
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND d.date BETWEEN :startDate AND :endDate " +
+            "AND tb.startTime >= :startTime")
+    List<EmployeeSchedule> findByDependencyIdAndDateRangeAndStartTime(
+            @Param("dependencyId") Long dependencyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("startTime") Time startTime);
+
     // Método para cargar días con sus timeBlocks
+
+
+
+
+
+
+
+
 
 
 }
