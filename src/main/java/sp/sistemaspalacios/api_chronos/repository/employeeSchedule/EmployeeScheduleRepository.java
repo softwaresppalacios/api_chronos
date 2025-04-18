@@ -129,16 +129,13 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
     @Query("SELECT es FROM EmployeeSchedule es WHERE es.shift.id = :dependencyId")
     List<EmployeeSchedule> findByDependencyId(@Param("dependencyId") Long dependencyId);
 
-    // Método para buscar por dependencyId y startTime
-    @Query(value = "SELECT DISTINCT es.* FROM employee_schedules es " +
-            "JOIN employee_schedule_days d ON d.employee_schedule_id = es.id " +
-            "JOIN employee_schedule_time_blocks tb ON tb.employee_schedule_day_id = d.id " +
-            "WHERE es.shift_id = :dependencyId " +
-            "AND to_char(tb.start_time, 'HH24:MI:SS') LIKE :startTimePattern",
-            nativeQuery = true)
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.days d " +
+            "JOIN d.timeBlocks tb " +
+            "WHERE es.shift.dependencyId = :dependencyId AND tb.startTime = :startTime")
     List<EmployeeSchedule> findByDependencyIdAndTimeBlockStartTime(
             @Param("dependencyId") Long dependencyId,
-            @Param("startTimePattern") String startTimePattern);
+            @Param("startTime") Time startTime);
 
     // Método para cargar días con sus timeBlocks
 

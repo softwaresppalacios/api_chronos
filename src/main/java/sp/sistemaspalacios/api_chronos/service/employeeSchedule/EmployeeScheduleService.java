@@ -536,7 +536,7 @@ public class EmployeeScheduleService {
         // Determinar qué consulta usar según si tenemos startTime o no
         if (startTime != null) {
             // Filtrar por dependencia y hora de inicio
-            schedules = employeeScheduleRepository.findByDependencyIdAndTimeBlockStartTime(dependencyId, String.valueOf(startTime));
+            schedules = employeeScheduleRepository.findByDependencyIdAndTimeBlockStartTime(dependencyId, startTime);
         } else {
             // Solo filtrar por dependencia (comportamiento original)
             schedules = employeeScheduleRepository.findByDependencyIdWithDays(dependencyId);
@@ -575,39 +575,33 @@ public class EmployeeScheduleService {
     }
 
     @Transactional
-    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId, String startTime) {
-        // Si startTime está presente, filtramos por dependencyId y startTime
+    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId, LocalTime startTime) {
         List<EmployeeSchedule> schedules;
 
-        if (startTime != null && !startTime.isEmpty()) {
-            System.out.println("Buscando horarios con dependencyId=" + dependencyId + " y startTime=" + startTime);
-            schedules = employeeScheduleRepository.findByDependencyIdAndTimeBlockStartTime(dependencyId, startTime);
+        if (startTime != null) {
+            // 🔄 Convertir LocalTime a java.sql.Time para el repository
+            Time sqlTime = Time.valueOf(startTime);
+            System.out.println("Buscando horarios con dependencyId=" + dependencyId + " y startTime=" + sqlTime);
+            schedules = employeeScheduleRepository.findByDependencyIdAndTimeBlockStartTime(dependencyId, sqlTime);
         } else {
             System.out.println("Buscando horarios solo con dependencyId=" + dependencyId);
             schedules = employeeScheduleRepository.findByDependencyId(dependencyId);
         }
 
         if (!schedules.isEmpty()) {
-            // Obtener IDs de los horarios
             List<Long> scheduleIds = schedules.stream()
                     .map(EmployeeSchedule::getId)
                     .collect(Collectors.toList());
 
-            // Cargar timeBlocks en batch para todos los días
             List<EmployeeScheduleDay> daysWithBlocks = employeeScheduleRepository
                     .findDaysWithTimeBlocksByScheduleIds(scheduleIds);
 
-            // Asociar los timeBlocks a los días correspondientes
             Map<Long, List<EmployeeScheduleDay>> daysByScheduleId = daysWithBlocks.stream()
-                    .collect(Collectors.groupingBy(
-                            day -> day.getEmployeeSchedule().getId(),
-                            Collectors.toList()
-                    ));
+                    .collect(Collectors.groupingBy(day -> day.getEmployeeSchedule().getId()));
 
             schedules.forEach(schedule -> {
                 List<EmployeeScheduleDay> days = daysByScheduleId.get(schedule.getId());
                 if (days != null) {
-                    // Reemplazar la lista de días con los que tienen timeBlocks cargados
                     schedule.getDays().clear();
                     schedule.getDays().addAll(days);
                 }
@@ -618,7 +612,6 @@ public class EmployeeScheduleService {
                 .map(this::convertToCompleteDTO)
                 .collect(Collectors.toList());
     }
-
 
 
     private EmployeeScheduleDTO convertToCompleteDTO(EmployeeSchedule schedule) {
@@ -809,7 +802,7 @@ public class EmployeeScheduleService {
         }
 
         try {
-            String url = "http://192.168.23.6:40020/api/employees/bynumberid/" + employeeId;
+            String url = "http://172.23.160.1:40020/api/employees/bynumberid/" + employeeId;
             ResponseEntity<EmployeeResponse> response = restTemplate.exchange(
                     url,
                     HttpMethod.GET,

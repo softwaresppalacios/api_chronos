@@ -375,8 +375,7 @@ public class EmployeeScheduleController {
     @GetMapping("/by-dependency-id")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDependencyId(
             @RequestParam Long dependencyId,
-            @RequestParam(required = false) String startTime) {
-        // Recibimos el ID de la dependencia como parámetro y opcionalmente la hora de inicio
+            @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime) {
         try {
             List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(dependencyId, startTime);
             return ResponseEntity.ok(result);
