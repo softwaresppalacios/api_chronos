@@ -142,19 +142,18 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             @Param("endDate") LocalDate endDate,
             @Param("startTime") Time startTime);
 
-    // Para cuando startTime es nulo
-    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
-            "JOIN es.shift s " +
-            "JOIN es.days d " +
-            "WHERE s.dependencyId = :dependencyId " +
-            "AND d.date >= :startDate " +
-            "AND d.date <= :endDate")
-    List<EmployeeSchedule> findByDependencyIdAndDateRangeNoTime(
-            @Param("dependencyId") Long dependencyId,
-            @Param("startDate") LocalDate startDate,
-            @Param("endDate") LocalDate endDate);
 
-    // Para cuando las fechas son nulas pero tenemos startTime
+
+
+
+
+
+
+
+
+
+
+
     @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
             "JOIN es.shift s " +
             "JOIN es.days d " +
@@ -165,11 +164,11 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             @Param("dependencyId") Long dependencyId,
             @Param("startTime") Time startTime);
 
-    // Para cuando todo es nulo excepto dependencyId
     @Query("SELECT es FROM EmployeeSchedule es " +
             "JOIN es.shift s " +
             "WHERE s.dependencyId = :dependencyId")
-    List<EmployeeSchedule> findByDependencyId(@Param("dependencyId") Long dependencyId);
+    List<EmployeeSchedule> findByDependencyId(
+            @Param("dependencyId") Long dependencyId);
 
     @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
             "JOIN es.shift s " +
@@ -184,7 +183,15 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             @Param("endDate") LocalDate endDate,
             @Param("startTime") Time startTime);
 
-    // Método para cargar días con sus timeBlocks
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "JOIN es.days d " +
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND d.date BETWEEN :startDate AND :endDate")
+    List<EmployeeSchedule> findByDependencyIdAndDateRange(
+            @Param("dependencyId") Long dependencyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
 
 
 
@@ -194,6 +201,91 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "JOIN es.days d " +
+            "LEFT JOIN d.timeBlocks tb " +
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND d.date >= :startDate " +
+            //"AND d.date <= :endDate " +
+            "AND tb.startTime = :startTime")
+    List<EmployeeSchedule> findByDependencyIdAndFullDateRangeAndShiftId(
+            @Param("dependencyId") Long dependencyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("startTime") Time startTime,
+            @Param("shiftId") Long shiftId);
+
+    @Query("SELECT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND s.id = :shiftId")
+    List<EmployeeSchedule> findByDependencyIdAndShiftId(
+            @Param("dependencyId") Long dependencyId,
+            @Param("shiftId") Long shiftId);
+
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "JOIN es.days d " +
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND d.date >= :startDate "
+            )
+    List<EmployeeSchedule> findByDependencyIdAndDateRangeNoTime(
+            @Param("dependencyId") Long dependencyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate);
+
+
+
+
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "JOIN es.days d " +
+            "LEFT JOIN d.timeBlocks tb " +
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND CAST(d.date AS DATE) >= :startDate " +  // Comparar solo la fecha sin hora
+               // Comparar solo la fecha sin hora
+            "AND s.id = :shiftId")
+    List<EmployeeSchedule> findByDependencyIdAndDateRangeAndShiftId(
+            @Param("dependencyId") Long dependencyId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate,
+            @Param("shiftId") Long shiftId);
 
 }
 

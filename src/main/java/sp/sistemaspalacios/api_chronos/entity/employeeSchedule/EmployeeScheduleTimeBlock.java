@@ -36,4 +36,7 @@ public class EmployeeScheduleTimeBlock {
     public Object getShift() {
         return null;
     }
+
+    public void setDay(EmployeeScheduleDay clonedDay) {
+    }
 }

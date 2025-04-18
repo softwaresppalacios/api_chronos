@@ -378,15 +378,17 @@ public class EmployeeScheduleController {
             @RequestParam Long dependencyId,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
-            @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime) {
+            @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime,
+            @RequestParam(required = false) Long shiftId) {
 
         try {
-            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(dependencyId, startDate, endDate, startTime);
+            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(dependencyId, startDate, endDate, startTime, shiftId);
             return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
         }
     }
+
 
 
 
