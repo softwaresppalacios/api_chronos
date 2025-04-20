@@ -271,30 +271,42 @@ public class EmployeeScheduleController {
 
 
     @PutMapping("/time-blocks/by-dependency")
-    public ResponseEntity<?> updateTimeBlocksByDependency(@RequestBody TimeBlockDependencyDTO timeBlockDTO) {
+    public ResponseEntity<?> updateTimeBlocksByDependency(@RequestBody List<TimeBlockDependencyDTO> timeBlockDTOList) {
         try {
-            // Validaciones básicas
-            if (timeBlockDTO.getId() == null || timeBlockDTO.getId() <= 0) {
-                return ResponseEntity.badRequest().body("ID del bloque de tiempo inválido.");
-            }
-            if (timeBlockDTO.getEmployeeScheduleDayId() == null || timeBlockDTO.getEmployeeScheduleDayId() <= 0) {
-                return ResponseEntity.badRequest().body("ID del día asociado inválido.");
-            }
-            if (timeBlockDTO.getDependencyId() == null || timeBlockDTO.getDependencyId() <= 0) {
-                return ResponseEntity.badRequest().body("ID de dependencia inválido.");
+            // Validaciones generales (si son necesarias)
+            if (timeBlockDTOList == null || timeBlockDTOList.isEmpty()) {
+                return ResponseEntity.badRequest().body("No se proporcionaron bloques de tiempo.");
             }
 
-            EmployeeScheduleTimeBlock updatedBlock = employeeScheduleService.updateTimeBlockByDependency(timeBlockDTO);
+            // Lista para almacenar las respuestas de los bloques de tiempo actualizados
+            List<Map<String, Object>> updatedBlocks = new ArrayList<>();
 
-            // Crear respuesta con la estructura solicitada
-            Map<String, Object> response = new LinkedHashMap<>();
-            response.put("id", updatedBlock.getId());
-            response.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
-            response.put("startTime", updatedBlock.getStartTime().toString());
-            response.put("endTime", updatedBlock.getEndTime().toString());
-            response.put("dependencyId", timeBlockDTO.getDependencyId());
+            // Iterar sobre la lista de bloques de tiempo y actualizarlos
+            for (TimeBlockDependencyDTO timeBlockDTO : timeBlockDTOList) {
+                // Validar cada bloque de tiempo individualmente (puedes reutilizar la lógica de validación existente)
+                if (timeBlockDTO.getId() == null || timeBlockDTO.getId() <= 0) {
+                    return ResponseEntity.badRequest().body("ID del bloque de tiempo inválido.");
+                }
+                if (timeBlockDTO.getEmployeeScheduleDayId() == null || timeBlockDTO.getEmployeeScheduleDayId() <= 0) {
+                    return ResponseEntity.badRequest().body("ID del día asociado inválido.");
+                }
 
-            return ResponseEntity.ok(response);
+
+                // Actualizar el bloque de tiempo
+                EmployeeScheduleTimeBlock updatedBlock = employeeScheduleService.updateTimeBlockByDependency(timeBlockDTO);
+
+                // Crear respuesta con la estructura solicitada para cada bloque actualizado
+                Map<String, Object> blockResponse = new LinkedHashMap<>();
+                blockResponse.put("id", updatedBlock.getId());
+                blockResponse.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
+                blockResponse.put("startTime", updatedBlock.getStartTime().toString());
+                blockResponse.put("endTime", updatedBlock.getEndTime().toString());
+
+                updatedBlocks.add(blockResponse);
+            }
+
+            // Responder con todos los bloques actualizados
+            return ResponseEntity.ok(updatedBlocks);
 
         } catch (ResourceNotFoundException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
@@ -302,7 +314,6 @@ public class EmployeeScheduleController {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
-
 
 
 
@@ -372,7 +383,6 @@ public class EmployeeScheduleController {
 
 
 
-
     @GetMapping("/by-dependency-id")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDependencyId(
             @RequestParam Long dependencyId,
@@ -388,7 +398,6 @@ public class EmployeeScheduleController {
             return ResponseEntity.badRequest().build();
         }
     }
-
 
 
 

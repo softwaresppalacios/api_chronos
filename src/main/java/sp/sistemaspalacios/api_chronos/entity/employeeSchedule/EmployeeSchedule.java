@@ -5,6 +5,7 @@ import lombok.Data;
 import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
 import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 
+import java.sql.Time;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -50,6 +51,5 @@ public class EmployeeSchedule {
         return null;
     }
 
-    // Método para actualizar los IDs de días y el ID padre de days
 
 }

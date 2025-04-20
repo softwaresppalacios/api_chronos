@@ -1,7 +1,5 @@
 package sp.sistemaspalacios.api_chronos.repository.employeeSchedule;
 
-import io.micrometer.common.lang.Nullable;
-import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -11,7 +9,6 @@ import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleD
 
 import java.sql.Time;
 import java.time.LocalDate;
-import java.time.LocalTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Optional;
@@ -133,9 +130,9 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             "JOIN es.days d " +
             "LEFT JOIN d.timeBlocks tb " +
             "WHERE s.dependencyId = :dependencyId " +
-            "AND d.date >= :startDate " +
-            "AND d.date <= :endDate " +
-            "AND tb.startTime >= :startTime")
+            "AND d.date = :startDate " +
+            "AND d.date = :endDate " +
+            "AND tb.startTime = :startTime")
     List<EmployeeSchedule> findByDependencyIdAndFullDateRange(
             @Param("dependencyId") Long dependencyId,
             @Param("startDate") LocalDate startDate,
@@ -154,15 +151,6 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
 
 
-    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
-            "JOIN es.shift s " +
-            "JOIN es.days d " +
-            "JOIN d.timeBlocks tb " +
-            "WHERE s.dependencyId = :dependencyId " +
-            "AND tb.startTime >= :startTime")
-    List<EmployeeSchedule> findByDependencyIdAndStartTime(
-            @Param("dependencyId") Long dependencyId,
-            @Param("startTime") Time startTime);
 
     @Query("SELECT es FROM EmployeeSchedule es " +
             "JOIN es.shift s " +
@@ -176,7 +164,7 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             "JOIN d.timeBlocks tb " +
             "WHERE s.dependencyId = :dependencyId " +
             "AND d.date BETWEEN :startDate AND :endDate " +
-            "AND tb.startTime >= :startTime")
+            "AND tb.startTime = :startTime")
     List<EmployeeSchedule> findByDependencyIdAndDateRangeAndStartTime(
             @Param("dependencyId") Long dependencyId,
             @Param("startDate") LocalDate startDate,
@@ -269,6 +257,16 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             @Param("dependencyId") Long dependencyId,
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate);
+
+    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
+            "JOIN es.shift s " +
+            "JOIN es.days d " +
+            "JOIN d.timeBlocks tb " +
+            "WHERE s.dependencyId = :dependencyId " +
+            "AND tb.startTime = :startTime")
+    List<EmployeeSchedule> findByDependencyIdAndStartTime(
+                    @Param("dependencyId") Long dependencyId,
+                    @Param("startTime") Time startTime);
 
 
 

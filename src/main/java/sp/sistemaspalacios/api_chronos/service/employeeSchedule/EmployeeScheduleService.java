@@ -292,8 +292,6 @@ public class EmployeeScheduleService {
 
 
 
-
-
     @Transactional
     public EmployeeScheduleTimeBlock updateTimeBlockByDependency(TimeBlockDependencyDTO timeBlockDTO) {
         // 1. Obtener el bloque de tiempo existente
@@ -320,19 +318,9 @@ public class EmployeeScheduleService {
         }
 
         // Obtener los IDs de dependencia
-        Long scheduleDependencyId = employeeSchedule.getShift().getDependencyId();
-        Long dtoDependencyId = Long.valueOf(timeBlockDTO.getDependencyId());
 
-        // Logging o impresión de los IDs (opcional, para depuración)
-        System.out.println("Schedule Dependency ID: " + scheduleDependencyId);
-        System.out.println("DTO Dependency ID: " + dtoDependencyId);
 
-        // Validación de dependencia más robusta
-        if (scheduleDependencyId == null || !scheduleDependencyId.equals(dtoDependencyId)) {
-            throw new IllegalArgumentException("El bloque de tiempo no pertenece a la dependencia especificada. " +
-                    "Dependency ID en Schedule: " + scheduleDependencyId +
-                    ", Dependency ID proporcionado: " + dtoDependencyId);
-        }
+
 
         // 4. Validar horas
         if (timeBlockDTO.getStartTime() == null || timeBlockDTO.getEndTime() == null) {
@@ -346,8 +334,6 @@ public class EmployeeScheduleService {
 
         return employeeScheduleTimeBlockRepository.save(existingTimeBlock);
     }
-
-
 
 
 
@@ -539,28 +525,27 @@ public class EmployeeScheduleService {
         List<EmployeeSchedule> schedules;
         Time sqlTime = (startTime != null) ? Time.valueOf(startTime) : null;
 
-        // Paso 1: Usar repositorios para filtrar inicialmente
-        if (startDate != null && endDate != null && sqlTime != null && shiftId != null) {
-            // Si tenemos todos los filtros, usar el método específico
+        // Primer filtrado con el repositorio
+        if (startTime != null) {
+            // Si tenemos filtro de hora, usar el método específico para filtrar por hora
+            schedules = employeeScheduleRepository.findByDependencyIdAndStartTime(dependencyId, sqlTime);
+        } else if (startDate != null && endDate != null && shiftId != null) {
             schedules = employeeScheduleRepository.findByDependencyIdAndFullDateRangeAndShiftId(
                     dependencyId, startDate, endDate, sqlTime, shiftId);
         } else if (startDate != null && endDate != null) {
             schedules = employeeScheduleRepository.findByDependencyIdAndDateRangeNoTime(
                     dependencyId, startDate, endDate);
-        } else if (sqlTime != null) {
-            schedules = employeeScheduleRepository.findByDependencyIdAndStartTime(
-                    dependencyId, sqlTime);
         } else if (shiftId != null) {
             schedules = employeeScheduleRepository.findByDependencyIdAndShiftId(dependencyId, shiftId);
         } else {
             schedules = employeeScheduleRepository.findByDependencyId(dependencyId);
         }
 
-        // Paso 2: Crear una copia profunda para trabajar con ella
+        // Filtrado adicional y clonación
         List<EmployeeSchedule> filteredSchedules = new ArrayList<>();
 
         for (EmployeeSchedule originalSchedule : schedules) {
-            // Filtrar por turno si no se hizo en la consulta inicial
+            // Filtrar por turno si es necesario
             if (shiftId != null && (originalSchedule.getShift() == null || !originalSchedule.getShift().getId().equals(shiftId))) {
                 continue;
             }
@@ -570,9 +555,9 @@ public class EmployeeScheduleService {
             BeanUtils.copyProperties(originalSchedule, clonedSchedule);
             clonedSchedule.setDays(new ArrayList<>());
 
-            // Procesar días
+            // Filtrar días por fecha y hora
             for (EmployeeScheduleDay originalDay : originalSchedule.getDays()) {
-                // Filtrar por fecha si es necesario
+                // Filtrar por fecha
                 if (startDate != null && endDate != null) {
                     Date dayDate = originalDay.getDate();
                     Date startDateUtil = java.sql.Date.valueOf(startDate);
@@ -583,36 +568,38 @@ public class EmployeeScheduleService {
                     }
                 }
 
-                // Clonar el día
+                // Clonar el día y filtrar bloques de tiempo
                 EmployeeScheduleDay clonedDay = new EmployeeScheduleDay();
                 BeanUtils.copyProperties(originalDay, clonedDay);
                 clonedDay.setEmployeeSchedule(clonedSchedule);
                 clonedDay.setTimeBlocks(new ArrayList<>());
 
-                // Procesar bloques de tiempo
-                boolean hasValidBlocks = false;
-
+                // Añadir solo los bloques de tiempo que coinciden con la hora de inicio
                 for (EmployeeScheduleTimeBlock originalBlock : originalDay.getTimeBlocks()) {
-                    // Filtrar por hora de inicio si es necesario
-                    if (sqlTime != null && originalBlock.getStartTime().before(sqlTime)) {
-                        continue;
+                    if (sqlTime != null) {
+                        // Añadir SOLO si la hora coincide exactamente
+                        if (originalBlock.getStartTime().equals(sqlTime)) {
+                            EmployeeScheduleTimeBlock clonedBlock = new EmployeeScheduleTimeBlock();
+                            BeanUtils.copyProperties(originalBlock, clonedBlock);
+                            clonedBlock.setDay(clonedDay);
+                            clonedDay.getTimeBlocks().add(clonedBlock);
+                        }
+                    } else {
+                        // Si no hay filtro de hora, añadir todos los bloques
+                        EmployeeScheduleTimeBlock clonedBlock = new EmployeeScheduleTimeBlock();
+                        BeanUtils.copyProperties(originalBlock, clonedBlock);
+                        clonedBlock.setDay(clonedDay);
+                        clonedDay.getTimeBlocks().add(clonedBlock);
                     }
-
-                    // Clonar el bloque
-                    EmployeeScheduleTimeBlock clonedBlock = new EmployeeScheduleTimeBlock();
-                    BeanUtils.copyProperties(originalBlock, clonedBlock);
-                    clonedBlock.setDay(clonedDay);
-                    clonedDay.getTimeBlocks().add(clonedBlock);
-                    hasValidBlocks = true;
                 }
 
-                // Sólo agregar días con bloques válidos (o si no hay filtro de hora)
-                if (hasValidBlocks || sqlTime == null) {
+                // Solo añadir el día si tiene bloques de tiempo (después del filtrado)
+                if (!clonedDay.getTimeBlocks().isEmpty()) {
                     clonedSchedule.getDays().add(clonedDay);
                 }
             }
 
-            // Sólo agregar horarios con días
+            // Solo añadir el horario si tiene días (después del filtrado)
             if (!clonedSchedule.getDays().isEmpty()) {
                 filteredSchedules.add(clonedSchedule);
             }
@@ -623,12 +610,6 @@ public class EmployeeScheduleService {
                 .map(this::convertToCompleteDTO)
                 .collect(Collectors.toList());
     }
-
-
-
-
-
-
 
 
 
