@@ -33,8 +33,27 @@ public class ShiftDetailService {
 
     public ShiftDetail createShiftDetail(ShiftDetail shiftDetail) {
         validateShiftDetail(shiftDetail);
+        // Verificación de tiempo
+        if (isTimeDifferenceTooLong(shiftDetail.getStartTime(), shiftDetail.getEndTime())) {
+            throw new IllegalArgumentException("La diferencia entre las horas de inicio y fin no puede ser mayor a 9 horas.");
+        }
         shiftDetail.setCreatedAt(new Date());
         return shiftDetailRepository.save(shiftDetail);
+    }
+
+    private boolean isTimeDifferenceTooLong(String startTime, String endTime) {
+        SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
+        try {
+            Date start = sdf.parse(startTime);
+            Date end = sdf.parse(endTime);
+
+            long differenceInMilliSeconds = end.getTime() - start.getTime();
+            long differenceInHours = differenceInMilliSeconds / (1000 * 60 * 60); // Convierte a horas
+
+            return differenceInHours > 9;
+        } catch (ParseException e) {
+            throw new IllegalArgumentException("Formato de hora inválido.");
+        }
     }
 
     public ShiftDetail updateShiftDetail(Long id, ShiftDetail shiftDetail) {

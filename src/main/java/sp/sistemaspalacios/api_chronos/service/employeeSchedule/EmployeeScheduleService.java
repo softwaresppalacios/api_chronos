@@ -806,7 +806,7 @@ public class EmployeeScheduleService {
         }
 
         try {
-            String url = "http://172.23.160.1:40020/api/employees/bynumberid/" + employeeId;
+            String url = "http://192.168.23.3:40020/api/employees/bynumberid/" + employeeId;
             ResponseEntity<EmployeeResponse> response = restTemplate.exchange(
                     url,
                     HttpMethod.GET,

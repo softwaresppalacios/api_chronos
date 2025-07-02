@@ -9,4 +9,7 @@ import java.util.List;
 @Repository
 public interface ShiftsRepository extends JpaRepository<Shifts, Long> {
     List<Shifts> findByDependencyId(Long dependencyId);
+
+    Shifts findByDependencyIdAndId(Long dependencyId, Long id);
+
 }

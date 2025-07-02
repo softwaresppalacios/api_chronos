@@ -83,4 +83,12 @@ public class ShiftsService {
             throw new IllegalArgumentException("El ID de dependencia es obligatorio");
         }
     }
+
+
+
+    public List<Shifts> findByDependencyaId(Long dependencyId) {
+        return shiftsRepository.findByDependencyId(dependencyId);
+    }
+
+
 }

@@ -10,6 +10,7 @@ import sp.sistemaspalacios.api_chronos.service.employeeAttendance.EmployeeAttend
 import java.util.Date;
 
 @RestController
+
 @RequestMapping("/api/attendance")
 public class EmployeeAttendanceController {
 

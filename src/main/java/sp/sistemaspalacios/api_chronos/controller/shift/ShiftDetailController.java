@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
+
 @RequestMapping("/api/shift-details")
 public class ShiftDetailController {
 
@@ -40,9 +41,10 @@ public class ShiftDetailController {
         } catch (IllegalArgumentException e) {
             Map<String, String> error = new HashMap<>();
             error.put("error", e.getMessage());
-            return ResponseEntity.badRequest().body(error);
+            return ResponseEntity.badRequest().body(error);  // Devuelve el mensaje de error
         }
     }
+
 
     @PutMapping("/{id}")
     public ResponseEntity<?> updateShiftDetail(@PathVariable Long id, @RequestBody ShiftDetail shiftDetail) {
