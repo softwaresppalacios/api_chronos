@@ -5,21 +5,20 @@ import java.time.LocalDateTime;
 
 @Entity
 public class WeeklyHours {
-
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;
+    private Long id;  // Asegúrate de que el campo 'id' esté presente
 
-    @Column(name = "hours", nullable = false)
-    private String hours;  // Cambiado de Duration a String
+    @Column
+    private String hours;
 
-    @Column(name = "created_at", nullable = false)
+    @Column
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
+    @Column
     private LocalDateTime updatedAt;
 
-    // Getters y setters
+    // Getter y Setter para 'id'
     public Long getId() {
         return id;
     }
@@ -28,6 +27,7 @@ public class WeeklyHours {
         this.id = id;
     }
 
+    // Otros getters y setters
     public String getHours() {
         return hours;
     }
@@ -50,5 +50,13 @@ public class WeeklyHours {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public long getMinHours() {
+        return 0;
+    }
+
+    public long getMaxHours() {
+        return 0;
     }
 }

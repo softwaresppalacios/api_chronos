@@ -40,9 +40,13 @@ public class WeeklyHoursController {
     // Crear un nuevo registro de horas semanales
     @PostMapping
     public ResponseEntity<WeeklyHoursDTO> createWeeklyHours(@RequestBody WeeklyHoursDTO weeklyHoursDTO) {
+        // Llamar al servicio para crear las nuevas horas semanales, eliminando la anterior si es necesario
         WeeklyHoursDTO createdWeeklyHoursDTO = weeklyHoursService.createWeeklyHours(weeklyHoursDTO);
+
+        // Retornar la respuesta con el status CREATED (201) y el DTO recién creado
         return ResponseEntity.status(HttpStatus.CREATED).body(createdWeeklyHoursDTO);
     }
+
 
     // Actualizar un registro de horas semanales
     @PutMapping("/{id}")
@@ -61,10 +65,14 @@ public class WeeklyHoursController {
     // Convertir de WeeklyHours a WeeklyHoursDTO
     private WeeklyHoursDTO convertToDTO(WeeklyHours weeklyHours) {
         WeeklyHoursDTO dto = new WeeklyHoursDTO();
-        dto.setId(weeklyHours.getId());
-        dto.setHours(String.valueOf(Duration.parse(weeklyHours.getHours().toString())));  // Convertir Duration a String
+        dto.setHours(weeklyHours.getHours());
         dto.setCreatedAt(weeklyHours.getCreatedAt());
         dto.setUpdatedAt(weeklyHours.getUpdatedAt());
+
+        // Asignar el id a dto sin setId
+        dto.id = weeklyHours.getId(); // Esto asigna el id directamente, sin necesidad de setId
+
         return dto;
     }
+
 }
