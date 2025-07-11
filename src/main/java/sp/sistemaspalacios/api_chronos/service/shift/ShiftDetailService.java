@@ -7,6 +7,7 @@ import sp.sistemaspalacios.api_chronos.entity.weeklyHours.WeeklyHours;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftDetailRepository;
 import sp.sistemaspalacios.api_chronos.repository.weeklyHours.WeeklyHoursRepository;
+import sp.sistemaspalacios.api_chronos.service.breakConfiguration.BreakConfigurationService;
 
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
@@ -24,6 +25,10 @@ public class ShiftDetailService {
     @Autowired
     private ShiftDetailRepository shiftDetailRepository;
 
+    // 🔹 NUEVA DEPENDENCIA: Para obtener la configuración del break
+    @Autowired
+    private BreakConfigurationService breakConfigurationService;
+
     public List<ShiftDetail> getAllShiftDetails() {
         return shiftDetailRepository.findAll();
     }
@@ -40,6 +45,9 @@ public class ShiftDetailService {
     public ShiftDetail createShiftDetail(ShiftDetail shiftDetail) {
         // Validaciones previas
         validateShiftDetail(shiftDetail);
+
+        // 🔹 NUEVA VALIDACIÓN: Break
+        validateBreakTimes(shiftDetail);
 
         // Verificación de que las horas no sean nulas
         if (shiftDetail.getStartTime() == null || shiftDetail.getEndTime() == null) {
@@ -71,20 +79,235 @@ public class ShiftDetailService {
         return shiftDetailRepository.save(shiftDetail);
     }
 
-    // ✅ VALIDACIÓN CORREGIDA: Horas semanales exactas
-// ✅ VALIDACIÓN CORREGIDA: Horas semanales exactas
+    // 🔹 NUEVA VALIDACIÓN: Validar tiempos de break
+    private void validateBreakTimes(ShiftDetail shiftDetail) {
+        // Si no se proporcionaron tiempos de break, no validar
+        if (shiftDetail.getBreakStartTime() == null && shiftDetail.getBreakEndTime() == null) {
+            return; // Break es opcional
+        }
+
+        // Si se proporciona uno, ambos deben estar presentes
+        if (shiftDetail.getBreakStartTime() == null || shiftDetail.getBreakEndTime() == null) {
+            throw new IllegalArgumentException("Si se define un break, tanto la hora de inicio como la de fin son obligatorias.");
+        }
+
+        // Validar formato de las horas del break
+        if (!isValidMilitaryTime(shiftDetail.getBreakStartTime())) {
+            throw new IllegalArgumentException("La hora de inicio del break debe estar en formato HH:mm (hora militar).");
+        }
+        if (!isValidMilitaryTime(shiftDetail.getBreakEndTime())) {
+            throw new IllegalArgumentException("La hora de fin del break debe estar en formato HH:mm (hora militar).");
+        }
+
+        // Validar que la hora de inicio del break sea antes que la de fin
+        if (isStartTimeAfterEndTime(shiftDetail.getBreakStartTime(), shiftDetail.getBreakEndTime())) {
+            throw new IllegalArgumentException("La hora de inicio del break no puede ser posterior a la hora de fin del break.");
+        }
+
+        // 🔸 VALIDACIÓN CLAVE: Duración exacta del break según configuración
+        validateBreakDuration(shiftDetail);
+
+        // 🔸 VALIDACIÓN: El break debe estar dentro del horario de trabajo
+        validateBreakWithinWorkingHours(shiftDetail);
+    }
+
+    // 🔹 VALIDAR DURACIÓN EXACTA DEL BREAK
+    private void validateBreakDuration(ShiftDetail shiftDetail) {
+        try {
+            // 🔍 DEBUG INICIAL
+            System.out.println("=== INICIO validateBreakDuration ===");
+            System.out.println("breakStartTime: " + shiftDetail.getBreakStartTime());
+            System.out.println("breakEndTime: " + shiftDetail.getBreakEndTime());
+            System.out.println("shiftId: " + (shiftDetail.getShift() != null ? shiftDetail.getShift().getId() : "NULL"));
+            System.out.println("currentShiftDetail ID: " + shiftDetail.getId());
+
+            // Obtener los minutos configurados para el break (30)
+            Integer configuredBreakMinutes = breakConfigurationService.getCurrentBreakMinutes();
+
+            // Calcular la duración real del break en minutos
+            int actualBreakMinutes = calculateBreakMinutes(
+                    shiftDetail.getBreakStartTime(),
+                    shiftDetail.getBreakEndTime()
+            );
+
+            System.out.println("=== DEBUG VALIDACIÓN BREAK INDIVIDUAL ===");
+            System.out.println("Break configurado total por shift: " + configuredBreakMinutes + " minutos");
+            System.out.println("Break actual este período: " + actualBreakMinutes + " minutos");
+
+            // 🔹 NUEVA LÓGICA: Validar que el break individual sea positivo
+            if (actualBreakMinutes <= 0) {
+                throw new IllegalArgumentException("La duración del break debe ser mayor a 0 minutos.");
+            }
+
+            // 🔹 NUEVA VALIDACIÓN: Total acumulado de breaks del shift
+            validateTotalShiftBreaks(shiftDetail, actualBreakMinutes, configuredBreakMinutes);
+
+        } catch (ResourceNotFoundException e) {
+            throw new IllegalArgumentException("No se ha configurado el tiempo de break. " +
+                    "Debe configurar los minutos de break antes de asignar horarios de break a los turnos.");
+        }
+    }
+
+    private void validateTotalShiftBreaks(ShiftDetail currentShiftDetail, int currentBreakMinutes, int maxTotalBreakMinutes) {
+        if (currentShiftDetail.getShift() == null || currentShiftDetail.getShift().getId() == null) {
+            // Si no hay shift, solo validar que no exceda el máximo individual
+            if (currentBreakMinutes > maxTotalBreakMinutes) {
+                throw new IllegalArgumentException(
+                        String.format("El break de %d minutos excede el máximo permitido de %d minutos.",
+                                currentBreakMinutes, maxTotalBreakMinutes)
+                );
+            }
+            return;
+        }
+
+        try {
+            // Obtener todos los ShiftDetail existentes del mismo shift
+            List<ShiftDetail> existingShiftDetails = shiftDetailRepository.findByShiftId(
+                    currentShiftDetail.getShift().getId()
+            );
+
+            // 🔍 DEBUG DETALLES DE BREAKS EXISTENTES
+            System.out.println("=== DEBUG DETALLES DE BREAKS EXISTENTES ===");
+            System.out.println("Shift ID: " + currentShiftDetail.getShift().getId());
+            System.out.println("Día actual que se está validando: " + currentShiftDetail.getDayOfWeek());
+            System.out.println("Cantidad de ShiftDetails encontrados: " + existingShiftDetails.size());
+
+            // 🔹 NUEVA LÓGICA: Validar solo breaks del MISMO DÍA
+            int totalExistingBreakMinutesForDay = 0;
+            Integer currentDayOfWeek = currentShiftDetail.getDayOfWeek();
+
+            for (ShiftDetail detail : existingShiftDetails) {
+                System.out.println("ShiftDetail ID: " + detail.getId());
+                System.out.println("  - dayOfWeek: " + detail.getDayOfWeek());
+                System.out.println("  - startTime: " + detail.getStartTime());
+                System.out.println("  - endTime: " + detail.getEndTime());
+                System.out.println("  - breakStart: " + detail.getBreakStartTime());
+                System.out.println("  - breakEnd: " + detail.getBreakEndTime());
+
+                // 🔹 SOLO PROCESAR SI ES EL MISMO DÍA
+                if (!detail.getDayOfWeek().equals(currentDayOfWeek)) {
+                    System.out.println("  - Día diferente, no se incluye en el cálculo");
+                    System.out.println("  ---");
+                    continue;
+                }
+
+                // Excluir el registro actual si es una actualización
+                if (currentShiftDetail.getId() != null && currentShiftDetail.getId().equals(detail.getId())) {
+                    System.out.println("  - Es el registro actual (actualización), se excluye");
+                    System.out.println("  ---");
+                    continue;
+                }
+
+                // Sumar breaks existentes DEL MISMO DÍA
+                if (detail.getBreakStartTime() != null && detail.getBreakEndTime() != null) {
+                    int existingBreakMinutes = calculateBreakMinutes(
+                            detail.getBreakStartTime(),
+                            detail.getBreakEndTime()
+                    );
+                    totalExistingBreakMinutesForDay += existingBreakMinutes;
+                    System.out.println("  - breakMinutes: " + existingBreakMinutes + " (INCLUIDO en cálculo)");
+                    System.out.println("  - Sumando break de ShiftDetail ID " + detail.getId() + ": " + existingBreakMinutes + " minutos");
+                } else {
+                    System.out.println("  - breakMinutes: 0 (sin break)");
+                }
+                System.out.println("  ---");
+            }
+
+            // Calcular el total con el nuevo break PARA ESTE DÍA
+            int totalWithNewBreakForDay = totalExistingBreakMinutesForDay + currentBreakMinutes;
+
+            System.out.println("=== DEBUG VALIDACIÓN BREAK POR DÍA ===");
+            System.out.println("Día de la semana: " + currentDayOfWeek + " (" + getDayName(currentDayOfWeek) + ")");
+            System.out.println("Breaks existentes en este día: " + totalExistingBreakMinutesForDay + " minutos");
+            System.out.println("Break del registro actual: " + currentBreakMinutes + " minutos");
+            System.out.println("Total con nuevo break para este día: " + totalWithNewBreakForDay + " minutos");
+            System.out.println("Máximo permitido por día: " + maxTotalBreakMinutes + " minutos");
+
+            // 🔹 VALIDACIÓN PRINCIPAL: No exceder el total permitido POR DÍA
+            if (totalWithNewBreakForDay > maxTotalBreakMinutes) {
+                throw new IllegalArgumentException(
+                        String.format("Break rechazado para %s. Total de breaks existentes en este día: %d min. " +
+                                        "Break actual: %d min. Total resultante: %d min. " +
+                                        "Máximo permitido por día: %d min.",
+                                getDayName(currentDayOfWeek), totalExistingBreakMinutesForDay, currentBreakMinutes,
+                                totalWithNewBreakForDay, maxTotalBreakMinutes)
+                );
+            }
+
+            // 🔹 INFORMACIÓN PARA EL USUARIO (opcional, en logs)
+            int remainingMinutesForDay = maxTotalBreakMinutes - totalWithNewBreakForDay;
+            if (remainingMinutesForDay > 0) {
+                System.out.println("Break aceptado para " + getDayName(currentDayOfWeek) +
+                        ". Minutos restantes para este día: " + remainingMinutesForDay);
+            } else {
+                System.out.println("Break aceptado para " + getDayName(currentDayOfWeek) +
+                        ". Se alcanzó el límite diario de breaks.");
+            }
+
+        } catch (Exception e) {
+            System.err.println("Error validando total de breaks por día: " + e.getMessage());
+            throw new IllegalArgumentException("Error validando la configuración de breaks por día: " + e.getMessage());
+        }
+    }
+
+    // 🔹 MÉTODO AUXILIAR: Obtener nombre del día
+    private String getDayName(Integer dayOfWeek) {
+        switch (dayOfWeek) {
+            case 1: return "Lunes";
+            case 2: return "Martes";
+            case 3: return "Miércoles";
+            case 4: return "Jueves";
+            case 5: return "Viernes";
+            case 6: return "Sábado";
+            case 7: return "Domingo";
+            default: return "Día " + dayOfWeek;
+        }
+    }
+    // 🔹 VALIDAR QUE EL BREAK ESTÉ DENTRO DEL HORARIO DE TRABAJO
+    private void validateBreakWithinWorkingHours(ShiftDetail shiftDetail) {
+        try {
+            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
+
+            Date workStart = sdf.parse(shiftDetail.getStartTime());
+            Date workEnd = sdf.parse(shiftDetail.getEndTime());
+            Date breakStart = sdf.parse(shiftDetail.getBreakStartTime());
+            Date breakEnd = sdf.parse(shiftDetail.getBreakEndTime());
+
+            // El break debe comenzar después del inicio del turno
+            if (breakStart.before(workStart) || breakStart.equals(workStart)) {
+                throw new IllegalArgumentException("El break no puede comenzar al mismo tiempo o antes que el inicio del turno.");
+            }
+
+            // El break debe terminar antes del fin del turno
+            if (breakEnd.after(workEnd) || breakEnd.equals(workEnd)) {
+                throw new IllegalArgumentException("El break no puede terminar al mismo tiempo o después que el fin del turno.");
+            }
+
+        } catch (ParseException e) {
+            throw new IllegalArgumentException("Error al validar las horas del break: " + e.getMessage());
+        }
+    }
+
+    // 🔹 CALCULAR DURACIÓN DEL BREAK EN MINUTOS
+    private int calculateBreakMinutes(String breakStartTime, String breakEndTime) {
+        SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
+        try {
+            Date start = sdf.parse(breakStartTime);
+            Date end = sdf.parse(breakEndTime);
+            long differenceInMilliSeconds = end.getTime() - start.getTime();
+            return (int) (differenceInMilliSeconds / (1000 * 60)); // Convertir a minutos
+        } catch (ParseException e) {
+            throw new IllegalArgumentException("Formato de hora inválido en break: " + e.getMessage());
+        }
+    }
+
+    // ===== MÉTODOS EXISTENTES (sin cambios) =====
+
     private boolean isWeeklyHoursExceeded(ShiftDetail shiftDetail) {
         try {
-            // 1. Obtener horas del turno actual
             int currentShiftHours = calculateShiftHours(shiftDetail.getStartTime(), shiftDetail.getEndTime());
-
-            // 2. Obtener la configuración exacta de horas semanales
             int exactWeeklyHours = getExactWeeklyHoursFromConfig();
-
-            // 3. Obtener total de horas ya programadas para este shift
             int totalScheduledHoursThisWeek = getTotalScheduledHoursForShift(shiftDetail);
-
-            // 4. Calcular total con el nuevo turno
             int totalWithNewShift = totalScheduledHoursThisWeek + currentShiftHours;
 
             System.out.println("=== DEBUG VALIDACIÓN HORAS EXACTAS ===");
@@ -93,19 +316,10 @@ public class ShiftDetailService {
             System.out.println("Total con este turno: " + totalWithNewShift);
             System.out.println("Horas exactas requeridas: " + exactWeeklyHours);
 
-            // 5. VALIDACIÓN EXACTA: No puede exceder las horas configuradas
             if (totalWithNewShift > exactWeeklyHours) {
                 System.out.println("ERROR: Excede las horas semanales exactas requeridas");
                 return true;
             }
-
-            // ❌ COMENTAR/ELIMINAR ESTAS LÍNEAS QUE CAUSAN EL PROBLEMA:
-        /*
-        if (wouldBeInsufficientWhenComplete(shiftDetail, totalWithNewShift, exactWeeklyHours)) {
-            System.out.println("ERROR: Las horas semanales serían insuficientes");
-            return true;
-        }
-        */
 
             if (isTimeDifferenceTooLong(shiftDetail.getStartTime(), shiftDetail.getEndTime())) {
                 throw new IllegalArgumentException("La diferencia entre las horas de inicio y fin no puede ser mayor a 9 horas.");
@@ -118,7 +332,7 @@ public class ShiftDetailService {
             throw new IllegalStateException("Error en validación de horas semanales: " + e.getMessage());
         }
     }
-    // ✅ NUEVO MÉTODO: Obtener horas exactas de configuración
+
     private int getExactWeeklyHoursFromConfig() {
         List<WeeklyHours> weeklyHoursList = weeklyHoursRepository.findAll();
 
@@ -126,9 +340,8 @@ public class ShiftDetailService {
             throw new IllegalStateException("No se encontró configuración de horas semanales. Debe configurar las horas exactas requeridas.");
         }
 
-        // Tomar el primer (y único) registro
         WeeklyHours config = weeklyHoursList.get(0);
-        String hoursStr = config.getHours(); // Ej: "44:00"
+        String hoursStr = config.getHours();
 
         if (hoursStr == null || !hoursStr.contains(":")) {
             throw new IllegalStateException("Formato de horas semanales inválido: " + hoursStr + ". Debe ser formato HH:mm");
@@ -148,14 +361,12 @@ public class ShiftDetailService {
         }
     }
 
-    // ✅ MÉTODO MEJORADO: Calcular horas programadas del shift
     private int getTotalScheduledHoursForShift(ShiftDetail shiftDetail) {
         if (shiftDetail.getShift() == null || shiftDetail.getShift().getId() == null) {
             return 0;
         }
 
         try {
-            // Obtener todos los detalles del mismo shift
             List<ShiftDetail> allShiftDetails = shiftDetailRepository.findByShiftId(
                     shiftDetail.getShift().getId()
             );
@@ -163,9 +374,8 @@ public class ShiftDetailService {
             int totalHours = 0;
 
             for (ShiftDetail detail : allShiftDetails) {
-                // Si es una actualización, excluir el registro actual para evitar doble conteo
                 if (shiftDetail.getId() != null && shiftDetail.getId().equals(detail.getId())) {
-                    continue; // Skip el mismo registro que se está actualizando
+                    continue;
                 }
 
                 if (detail.getStartTime() != null && detail.getEndTime() != null) {
@@ -181,48 +391,6 @@ public class ShiftDetailService {
         }
     }
 
-    // ✅ NUEVO MÉTODO: Verificar si sería insuficiente al completar
-    private boolean wouldBeInsufficientWhenComplete(ShiftDetail shiftDetail, int currentTotal, int exactRequired) {
-        // Obtener días ya programados en el shift
-        List<ShiftDetail> allDetails = shiftDetailRepository.findByShiftId(shiftDetail.getShift().getId());
-
-        Set<Integer> scheduledDays = allDetails.stream()
-                .filter(detail -> !detail.getId().equals(shiftDetail.getId())) // Excluir el actual si es actualización
-                .map(ShiftDetail::getDayOfWeek)
-                .collect(Collectors.toSet());
-
-        // Agregar el día actual
-        scheduledDays.add(shiftDetail.getDayOfWeek());
-
-        // Definir días laborales (ajusta según tu negocio)
-        Set<Integer> workDays = Set.of(1, 2, 3, 4, 5); // Lunes a Viernes
-        // O si trabajas 7 días: Set.of(1, 2, 3, 4, 5, 6, 7);
-
-        // Si ya tenemos todos los días laborales programados
-        if (scheduledDays.containsAll(workDays)) {
-            // El total actual debe ser exactamente el requerido
-            return currentTotal != exactRequired;
-        }
-
-        // Si aún faltan días, verificar si es posible alcanzar el exacto
-        int remainingDays = workDays.size() - scheduledDays.size();
-        int maxPossibleWithRemainingDays = currentTotal + (remainingDays * 9); // Máximo 9 horas por día
-        int minPossibleWithRemainingDays = currentTotal + (remainingDays * 4); // Mínimo 4 horas por día
-
-        // Si ni siquiera con el máximo posible podemos alcanzar el requerido
-        if (maxPossibleWithRemainingDays < exactRequired) {
-            return true;
-        }
-
-        // Si ni siquiera con el mínimo posible podemos evitar exceder el requerido
-        if (minPossibleWithRemainingDays > exactRequired) {
-            return true;
-        }
-
-        return false;
-    }
-
-    // ✅ NUEVO MÉTODO: Obtener mensaje de error específico
     private String getWeeklyHoursErrorMessage(ShiftDetail shiftDetail) {
         int currentShiftHours = calculateShiftHours(shiftDetail.getStartTime(), shiftDetail.getEndTime());
         int exactWeeklyHours = getExactWeeklyHoursFromConfig();
@@ -242,14 +410,12 @@ public class ShiftDetailService {
         }
     }
 
-    // ✅ MÉTODO CORREGIDO: Validación diaria mínima
     private boolean isDailyShiftTooShort(String startTime, String endTime) {
         int shiftHours = calculateShiftHours(startTime, endTime);
-        int minDailyHours = 2; // Mínimo diario razonable
+        int minDailyHours = 2;
         return shiftHours < minDailyHours;
     }
 
-    // ✅ MÉTODO MEJORADO: Cálculo de horas del turno
     private int calculateShiftHours(String startTime, String endTime) {
         SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
         try {
@@ -262,7 +428,6 @@ public class ShiftDetailService {
         }
     }
 
-    // Métodos existentes sin cambios
     private boolean isStartTimeAfterEndTime(String startTime, String endTime) {
         SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
         try {
@@ -287,21 +452,24 @@ public class ShiftDetailService {
         }
     }
 
-
-
-
-
-
-
     public ShiftDetail updateShiftDetail(Long id, ShiftDetail shiftDetail) {
         validateShiftDetail(shiftDetail);
+
+        // 🔹 NUEVA VALIDACIÓN: Break también en updates
+        validateBreakTimes(shiftDetail);
+
         ShiftDetail existing = shiftDetailRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("ShiftDetail no encontrado con ID: " + id));
 
-        existing.setShift(shiftDetail.getShift());  // 🔹 Aquí se corrige la asignación del Shift
+        existing.setShift(shiftDetail.getShift());
         existing.setDayOfWeek(shiftDetail.getDayOfWeek());
         existing.setStartTime(shiftDetail.getStartTime());
         existing.setEndTime(shiftDetail.getEndTime());
+
+        // 🔹 ACTUALIZAR CAMPOS DE BREAK
+        existing.setBreakStartTime(shiftDetail.getBreakStartTime());
+        existing.setBreakEndTime(shiftDetail.getBreakEndTime());
+
         existing.setUpdatedAt(new Date());
 
         return shiftDetailRepository.save(existing);
@@ -315,7 +483,7 @@ public class ShiftDetailService {
     }
 
     private void validateShiftDetail(ShiftDetail shiftDetail) {
-        if (shiftDetail.getShift() == null || shiftDetail.getShift().getId() == null) {  // 🔹 Validamos que el Shift esté presente
+        if (shiftDetail.getShift() == null || shiftDetail.getShift().getId() == null) {
             throw new IllegalArgumentException("El turno (Shift) es obligatorio.");
         }
         if (shiftDetail.getDayOfWeek() == null || shiftDetail.getDayOfWeek() < 1 || shiftDetail.getDayOfWeek() > 7) {
@@ -332,55 +500,42 @@ public class ShiftDetailService {
         }
     }
 
-    /**
-     * Verifica si la hora está en formato militar HH:mm y es válida (00:00 a 23:59).
-     */
     private boolean isValidMilitaryTime(String time) {
         if (time == null || time.trim().isEmpty()) {
             return false;
         }
 
-        // Expresión regular para horas de trabajo estándar (00:00 a 23:59)
         String timeRegex = "^([01]?[0-9]|2[0-3]):([0-5][0-9])$";
 
-        // Si el valor es menor a 24 horas (hora estándar), validamos el formato
         if (Pattern.matches(timeRegex, time)) {
             return true;
         }
 
-        // Si la hora es mayor a 24 (como "44:00"), la consideramos válida para el total semanal
         String[] parts = time.split(":");
         int hours = Integer.parseInt(parts[0]);
         if (hours >= 24) {
-            return true; // Permite horas mayores a 23 para el total semanal
+            return true;
         }
 
-        return false;  // Si no cumple ninguna de las condiciones, es inválido
+        return false;
     }
 
-
     private boolean isTimeValid(String startTime, String endTime) {
-        // Validar que las horas de inicio y fin estén dentro del rango permitido
         SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
         try {
             Date start = sdf.parse(startTime);
             Date end = sdf.parse(endTime);
 
-            // Verifica que la hora de inicio no exceda las 23:59 y la hora de fin no exceda las 23:59
             if (start.after(end)) {
                 throw new IllegalArgumentException("La hora de inicio no puede ser posterior a la hora de fin.");
             }
-
-            // Aquí se puede añadir validaciones adicionales si es necesario
 
         } catch (ParseException e) {
             throw new IllegalArgumentException("Formato de hora inválido. El formato debe ser HH:mm (hora militar, de 00:00 a 23:59).");
         }
         return true;
     }
-    /**
-     * Verifica si la hora de fin es menor o igual a la hora de inicio.
-     */
+
     private boolean isEndTimeBeforeStartTime(String startTime, String endTime) {
         SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
         try {
@@ -388,7 +543,7 @@ public class ShiftDetailService {
             Date end = sdf.parse(endTime);
             return end.before(start) || end.equals(start);
         } catch (ParseException e) {
-            return true; // Si hay error en el parseo, consideramos la hora como inválida.
+            return true;
         }
     }
 }

@@ -23,6 +23,12 @@ public class ShiftDetail {
     private String startTime;
     private String endTime;
 
+    @Column(name = "break_start_time")
+    private String breakStartTime;
+
+    @Column(name = "break_end_time")
+    private String breakEndTime;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     @Temporal(TemporalType.TIMESTAMP)
     private Date createdAt;
