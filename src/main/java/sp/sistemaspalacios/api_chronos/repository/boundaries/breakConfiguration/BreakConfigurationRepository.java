@@ -1,10 +1,10 @@
 
-package sp.sistemaspalacios.api_chronos.repository.breakConfiguration;
+package sp.sistemaspalacios.api_chronos.repository.boundaries.breakConfiguration;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
-import sp.sistemaspalacios.api_chronos.entity.breakConfiguration.BreakConfiguration;
+import sp.sistemaspalacios.api_chronos.entity.boundaries.breakConfiguration.BreakConfiguration;
 
 import java.util.Optional;
 

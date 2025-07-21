@@ -1,13 +1,11 @@
-package sp.sistemaspalacios.api_chronos.controller.breakConfiguration;
+package sp.sistemaspalacios.api_chronos.controller.boundaries.breakConfiguration;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.dto.BreakConfigurationDTO;
-import sp.sistemaspalacios.api_chronos.entity.breakConfiguration.BreakConfiguration;
-import sp.sistemaspalacios.api_chronos.service.breakConfiguration.BreakConfigurationService;
+import sp.sistemaspalacios.api_chronos.entity.boundaries.breakConfiguration.BreakConfiguration;
+import sp.sistemaspalacios.api_chronos.service.boundaries.breakConfiguration.BreakConfigurationService;
 
-import java.sql.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,9 +16,11 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/break-config")
 public class BreakConfigurationController {
 
-    @Autowired
-    private BreakConfigurationService breakConfigurationService;
+    private final BreakConfigurationService breakConfigurationService;
 
+    public BreakConfigurationController(BreakConfigurationService breakConfigurationService) {
+        this.breakConfigurationService = breakConfigurationService;
+    }
     /**
      * 🔹 Obtener la configuración actual de break
      */

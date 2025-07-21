@@ -12,8 +12,11 @@ import java.util.List;
 @Service
 public class ShiftsService {
 
-    @Autowired
-    private ShiftsRepository shiftsRepository;
+    private final ShiftsRepository shiftsRepository;
+
+    public ShiftsService(ShiftsRepository shiftsRepository) {
+        this.shiftsRepository = shiftsRepository;
+    }
 
     // 🔹 Obtener todos los turnos
     public List<Shifts> findAll() {

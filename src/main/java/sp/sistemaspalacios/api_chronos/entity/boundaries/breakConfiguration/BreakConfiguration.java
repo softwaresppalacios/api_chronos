@@ -1,4 +1,4 @@
-package sp.sistemaspalacios.api_chronos.entity.breakConfiguration;
+package sp.sistemaspalacios.api_chronos.entity.boundaries.breakConfiguration;
 
 import jakarta.persistence.*;
 import lombok.Data;

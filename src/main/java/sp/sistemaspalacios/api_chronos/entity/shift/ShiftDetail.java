@@ -29,6 +29,23 @@ public class ShiftDetail {
     @Column(name = "break_end_time")
     private String breakEndTime;
 
+    @Column(name = "break_minutes")
+    private Integer breakMinutes;
+
+    @Column(name = "weekly_hours")
+    private Integer weeklyHours;
+
+    @Column(name = "night_hours_start")
+    private String nightHoursStart;
+
+    @Column(name = "night_hours_end")
+    private String nightHoursEnd;
+
+    @Column(name = "hours_per_day")
+    private Integer hoursPerDay;
+
+
+
     @Column(name = "created_at", nullable = false, updatable = false)
     @Temporal(TemporalType.TIMESTAMP)
     private Date createdAt;

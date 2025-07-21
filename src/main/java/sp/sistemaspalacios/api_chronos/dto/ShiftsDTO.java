@@ -7,6 +7,8 @@ public class ShiftsDTO {
     private String name;
     private String description;
     private Long timeBreak;
+    private String dependencyName; // <--- AGREGADO AQUÍ
+
     private List<ShiftDetailDTO> shiftDetails;
 
     public ShiftsDTO(Long id, String name, String description, Long timeBreak, List<ShiftDetailDTO> shiftDetails) {

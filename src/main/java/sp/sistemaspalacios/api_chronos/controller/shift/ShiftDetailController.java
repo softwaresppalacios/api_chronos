@@ -1,6 +1,5 @@
 package sp.sistemaspalacios.api_chronos.controller.shift;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.dto.ShiftDetailDTO;
@@ -17,12 +16,12 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/shift-details")
 public class ShiftDetailController {
 
-    @Autowired
-    private ShiftDetailService shiftDetailService;
+    private final ShiftDetailService shiftDetailService;
 
-    /**
-     * 🔹 Obtener todos los shift details con DTOs
-     */
+    public ShiftDetailController(ShiftDetailService shiftDetailService) {
+        this.shiftDetailService = shiftDetailService;
+    }
+
     @GetMapping
     public ResponseEntity<List<ShiftDetailDTO>> getAllShiftDetails() {
         List<ShiftDetail> shiftDetails = shiftDetailService.getAllShiftDetails();
@@ -32,9 +31,6 @@ public class ShiftDetailController {
         return ResponseEntity.ok(dtos);
     }
 
-    /**
-     * 🔹 Obtener shift detail por ID con DTO
-     */
     @GetMapping("/{id}")
     public ResponseEntity<ShiftDetailDTO> getShiftDetailById(@PathVariable Long id) {
         ShiftDetail shiftDetail = shiftDetailService.getShiftDetailById(id);
@@ -42,9 +38,6 @@ public class ShiftDetailController {
         return ResponseEntity.ok(dto);
     }
 
-    /**
-     * 🔹 Obtener shift details por shift ID con DTOs
-     */
     @GetMapping("/shift/{shiftId}")
     public ResponseEntity<List<ShiftDetailDTO>> getShiftDetailsByShiftId(@PathVariable Long shiftId) {
         List<ShiftDetail> shiftDetails = shiftDetailService.getShiftDetailsByShiftId(shiftId);
@@ -55,31 +48,22 @@ public class ShiftDetailController {
     }
 
     /**
-     * 🔹 Crear shift detail usando JSON directo (CON BREAK)
+     * 🔹 Crear shift detail (retorna el resumen de horas programadas/faltantes)
      */
     @PostMapping
     public ResponseEntity<?> createShiftDetail(@RequestBody ShiftDetail shiftDetail) {
         try {
-            // 🔧 LOGS PARA DEBUG - ELIMINAR DESPUÉS
-            System.out.println("=== DEBUG CREATE SHIFT DETAIL ===");
-            System.out.println("ShiftDetail recibido: " + shiftDetail);
-            System.out.println("Shift ID: " + (shiftDetail.getShift() != null ? shiftDetail.getShift().getId() : "NULL"));
-            System.out.println("Break start: " + shiftDetail.getBreakStartTime());
-            System.out.println("Break end: " + shiftDetail.getBreakEndTime());
-            System.out.println("=================================");
-
-            // Validar que el shift esté presente
             ShiftDetail processedEntity = processShiftDetailEntity(shiftDetail);
-
-            // Crear el shift detail
             ShiftDetail created = shiftDetailService.createShiftDetail(processedEntity);
-
-            // Convertir respuesta a DTO
             ShiftDetailDTO responseDTO = convertToDTO(created);
+
+            // Resumen de horas
+            Map<String, Object> hoursSummary = shiftDetailService.getWeeklyHoursSummary(created.getShift().getId());
 
             Map<String, Object> response = new HashMap<>();
             response.put("message", "Detalle de turno creado exitosamente");
             response.put("shiftDetail", responseDTO);
+            response.put("hoursSummary", hoursSummary);
 
             return ResponseEntity.ok(response);
 
@@ -91,32 +75,22 @@ public class ShiftDetailController {
     }
 
     /**
-     * 🔹 Actualizar shift detail usando JSON directo (CON BREAK)
+     * 🔹 Actualizar shift detail (también retorna el resumen)
      */
     @PutMapping("/{id}")
     public ResponseEntity<?> updateShiftDetail(@PathVariable Long id, @RequestBody ShiftDetail shiftDetail) {
         try {
-            // 🔧 LOGS PARA DEBUG - ELIMINAR DESPUÉS
-            System.out.println("=== DEBUG UPDATE SHIFT DETAIL ===");
-            System.out.println("ID: " + id);
-            System.out.println("ShiftDetail recibido: " + shiftDetail);
-            System.out.println("Shift ID: " + (shiftDetail.getShift() != null ? shiftDetail.getShift().getId() : "NULL"));
-            System.out.println("Break start: " + shiftDetail.getBreakStartTime());
-            System.out.println("Break end: " + shiftDetail.getBreakEndTime());
-            System.out.println("=================================");
-
-            // Validar que el shift esté presente
             ShiftDetail processedEntity = processShiftDetailEntity(shiftDetail);
-
-            // Actualizar el shift detail
             ShiftDetail updated = shiftDetailService.updateShiftDetail(id, processedEntity);
-
-            // Convertir respuesta a DTO
             ShiftDetailDTO responseDTO = convertToDTO(updated);
+
+            // Resumen de horas
+            Map<String, Object> hoursSummary = shiftDetailService.getWeeklyHoursSummary(updated.getShift().getId());
 
             Map<String, Object> response = new HashMap<>();
             response.put("message", "Detalle de turno actualizado exitosamente");
             response.put("shiftDetail", responseDTO);
+            response.put("hoursSummary", hoursSummary);
 
             return ResponseEntity.ok(response);
 
@@ -127,9 +101,6 @@ public class ShiftDetailController {
         }
     }
 
-    /**
-     * 🔹 Eliminar shift detail
-     */
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteShiftDetail(@PathVariable Long id) {
         try {
@@ -144,9 +115,7 @@ public class ShiftDetailController {
         }
     }
 
-    /**
-     * 🔹 Convertir Entity a DTO
-     */
+    // Convertir Entity a DTO
     private ShiftDetailDTO convertToDTO(ShiftDetail entity) {
         return new ShiftDetailDTO(
                 entity.getId(),
@@ -154,71 +123,54 @@ public class ShiftDetailController {
                 entity.getDayOfWeek(),
                 entity.getStartTime(),
                 entity.getEndTime(),
-                entity.getBreakStartTime(),  // 🔹 NUEVO
-                entity.getBreakEndTime()     // 🔹 NUEVO
+                entity.getBreakStartTime(),
+                entity.getBreakEndTime(),
+                entity.getBreakMinutes(),
+                entity.getWeeklyHours(),
+                entity.getNightHoursStart(),
+                entity.getHoursPerDay()
+
+
         );
     }
 
-    /**
-     * 🔹 Convertir DTO/JSON a Entity
-     */
+    // Convertir DTO/JSON a Entity
     private ShiftDetail convertToEntity(ShiftDetailDTO dto) {
         ShiftDetail entity = new ShiftDetail();
-
-        // Campos básicos
         entity.setId(dto.getId());
         entity.setDayOfWeek(dto.getDayOfWeek());
         entity.setStartTime(dto.getStartTime());
         entity.setEndTime(dto.getEndTime());
-
-        // 🔹 NUEVOS CAMPOS DE BREAK
         entity.setBreakStartTime(dto.getBreakStartTime());
         entity.setBreakEndTime(dto.getBreakEndTime());
 
-        // Shift (solo ID para evitar problemas de referencia)
         if (dto.getShiftId() != null) {
             Shifts shift = new Shifts();
             shift.setId(dto.getShiftId());
             entity.setShift(shift);
         }
-
         return entity;
     }
 
-    /**
-     * 🔹 Convertir JSON directo a Entity (para requests que vienen como ShiftDetail)
-     */
     private ShiftDetail processShiftDetailEntity(ShiftDetail shiftDetail) {
-        // Si el shift viene como objeto con ID, asegurarse que esté correctamente referenciado
         if (shiftDetail.getShift() != null && shiftDetail.getShift().getId() != null) {
-            // El shift ya viene correctamente, no hay que hacer nada
             return shiftDetail;
         }
-
         throw new IllegalArgumentException("El turno (Shift) es obligatorio y debe tener un ID válido.");
     }
 
-    /**
-     * 🔹 Manejo de errores
-     */
     private ResponseEntity<Map<String, String>> handleError(String message) {
         Map<String, String> response = new HashMap<>();
         response.put("error", message);
         return ResponseEntity.badRequest().body(response);
     }
 
-    /**
-     * 🔹 Endpoint para validar configuración de break (helper)
-     */
     @GetMapping("/break-info")
     public ResponseEntity<?> getBreakInfo() {
         try {
-            // Este endpoint podría mostrar la configuración actual del break
-            // para que el frontend sepa cuántos minutos debe usar
             Map<String, Object> response = new HashMap<>();
             response.put("message", "Para obtener la configuración de break, use /api/break-config");
             response.put("breakConfigEndpoint", "/api/break-config/minutes");
-
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return handleError("Error obteniendo información de break: " + e.getMessage());

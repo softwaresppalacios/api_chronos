@@ -6,7 +6,11 @@ public class ShiftDetailDTO {
     private Integer dayOfWeek;
     private String startTime;
     private String endTime;
-
+    // NUEVOS CAMPOS PARA CONFIGURACIÓN GLOBAL USADA
+    private Integer breakMinutes;     // Descanso usado cuando se creó
+    private Integer weeklyHours;      // Horas semanales usadas cuando se creó
+    private String nightHoursStart;   // Hora inicio nocturna usada cuando se creó
+    private Integer hoursPerDay;      // Horas máximas al día usadas cuando se creó
     // 🔹 NUEVOS CAMPOS PARA EL BREAK
     private String breakStartTime;  // Hora de inicio del descanso
     private String breakEndTime;    // Hora de fin del descanso
@@ -16,7 +20,7 @@ public class ShiftDetailDTO {
 
     // Constructor completo (para respuestas)
     public ShiftDetailDTO(Long id, Long shiftId, Integer dayOfWeek, String startTime, String endTime,
-                          String breakStartTime, String breakEndTime) {
+                          String breakStartTime, String breakEndTime,  Integer breakMinutes, Integer weeklyHours, String nightHoursStart, Integer hoursPerDay) {
         this.id = id;
         this.shiftId = shiftId;
         this.dayOfWeek = dayOfWeek;
@@ -24,6 +28,10 @@ public class ShiftDetailDTO {
         this.endTime = endTime;
         this.breakStartTime = breakStartTime;
         this.breakEndTime = breakEndTime;
+        this.breakMinutes = breakMinutes;
+        this.weeklyHours = weeklyHours;
+        this.nightHoursStart = nightHoursStart;
+        this.hoursPerDay = hoursPerDay;
     }
 
     // Constructor para crear (sin id)
@@ -101,7 +109,14 @@ public class ShiftDetailDTO {
     public void setBreakEndTime(String breakEndTime) {
         this.breakEndTime = breakEndTime;
     }
-
+    public Integer getBreakMinutes() { return breakMinutes; }
+    public void setBreakMinutes(Integer breakMinutes) { this.breakMinutes = breakMinutes; }
+    public Integer getWeeklyHours() { return weeklyHours; }
+    public void setWeeklyHours(Integer weeklyHours) { this.weeklyHours = weeklyHours; }
+    public String getNightHoursStart() { return nightHoursStart; }
+    public void setNightHoursStart(String nightHoursStart) { this.nightHoursStart = nightHoursStart; }
+    public Integer getHoursPerDay() { return hoursPerDay; }
+    public void setHoursPerDay(Integer hoursPerDay) { this.hoursPerDay = hoursPerDay; }
     @Override
     public String toString() {
         return "ShiftDetailDTO{" +

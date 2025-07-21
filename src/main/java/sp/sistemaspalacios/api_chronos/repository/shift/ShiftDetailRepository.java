@@ -11,7 +11,10 @@ import java.util.Optional;
 @Repository
 public interface ShiftDetailRepository extends JpaRepository<ShiftDetail, Long> {
     List<ShiftDetail> findByShiftId(Long shiftId);
+
     Optional<ShiftDetail> findByShiftIdAndDayOfWeek(Long shiftId, int dayOfWeek);
+    List<ShiftDetail> findByShiftIdAndDayOfWeek(Long shiftId, Integer dayOfWeek);
+
 
 }
 

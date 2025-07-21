@@ -1,11 +1,10 @@
-package sp.sistemaspalacios.api_chronos.service.weeklyHours;
+package sp.sistemaspalacios.api_chronos.service.boundaries.weeklyHours;
 
 import jakarta.transaction.Transactional;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import sp.sistemaspalacios.api_chronos.dto.WeeklyHoursDTO;
-import sp.sistemaspalacios.api_chronos.entity.weeklyHours.WeeklyHours;
-import sp.sistemaspalacios.api_chronos.repository.weeklyHours.WeeklyHoursRepository;
+import sp.sistemaspalacios.api_chronos.entity.boundaries.weeklyHours.WeeklyHours;
+import sp.sistemaspalacios.api_chronos.repository.boundaries.weeklyHours.WeeklyHoursRepository;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 
 import java.time.LocalDateTime;
@@ -15,10 +14,11 @@ import java.util.Optional;
 @Service
 public class WeeklyHoursService {
 
-    @Autowired
-    private WeeklyHoursRepository weeklyHoursRepository;
+    private final WeeklyHoursRepository weeklyHoursRepository;
 
-
+    public WeeklyHoursService(WeeklyHoursRepository weeklyHoursRepository) {
+        this.weeklyHoursRepository = weeklyHoursRepository;
+    }
 
 
     public List<WeeklyHours> getAllWeeklyHours() {
@@ -32,30 +32,25 @@ public class WeeklyHoursService {
     // Crear nuevas horas semanales
     @Transactional
     public WeeklyHoursDTO createWeeklyHours(WeeklyHoursDTO weeklyHoursDTO) {
-        // 1. Buscar si existe algún registro
-        Optional<WeeklyHours> existingRecord = weeklyHoursRepository.findFirstByOrderByIdAsc();
+        validateMinimumWeeklyHours(weeklyHoursDTO.getHours());
 
+        Optional<WeeklyHours> existingRecord = weeklyHoursRepository.findFirstByOrderByIdAsc();
         WeeklyHours weeklyHours;
 
         if (existingRecord.isPresent()) {
-            // 2. Si existe, actualizar el registro existente
             weeklyHours = existingRecord.get();
             weeklyHours.setHours(weeklyHoursDTO.getHours());
             weeklyHours.setUpdatedAt(LocalDateTime.now());
         } else {
-            // 3. Si no existe, crear uno nuevo
             weeklyHours = new WeeklyHours();
             weeklyHours.setHours(weeklyHoursDTO.getHours());
             weeklyHours.setCreatedAt(LocalDateTime.now());
             weeklyHours.setUpdatedAt(LocalDateTime.now());
         }
 
-        // 4. Guardar el registro
         weeklyHours = weeklyHoursRepository.save(weeklyHours);
-
         return convertToDTO(weeklyHours);
     }
-
 
 
 
@@ -75,17 +70,19 @@ public class WeeklyHoursService {
 
     // Actualizar horas semanales
     public WeeklyHoursDTO updateWeeklyHours(Long id, WeeklyHoursDTO weeklyHoursDTO) {
+        validateMinimumWeeklyHours(weeklyHoursDTO.getHours());
+
         WeeklyHours weeklyHours = weeklyHoursRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("WeeklyHours not found with id " + id));
 
-        weeklyHours.setHours(weeklyHoursDTO.getHours());  // Establecer horas como String
+        weeklyHours.setHours(weeklyHoursDTO.getHours());
         weeklyHours.setCreatedAt(weeklyHoursDTO.getCreatedAt());
         weeklyHours.setUpdatedAt(weeklyHoursDTO.getUpdatedAt());
 
-        // Guardar y devolver el DTO actualizado
         weeklyHours = weeklyHoursRepository.save(weeklyHours);
         return convertToDTO(weeklyHours);
     }
+
 
     // Eliminar horas semanales
     public void deleteWeeklyHours(Long id) {
@@ -93,6 +90,37 @@ public class WeeklyHoursService {
                 .orElseThrow(() -> new ResourceNotFoundException("WeeklyHours not found with id " + id));
         weeklyHoursRepository.delete(weeklyHours);
     }
+
+
+    public int getCurrentWeeklyHours() {
+        Optional<WeeklyHours> weeklyHoursOpt = weeklyHoursRepository.findFirstByOrderByIdAsc();
+        if (weeklyHoursOpt.isPresent()) {
+            WeeklyHours weeklyHours = weeklyHoursOpt.get();
+            String value = weeklyHours.getHours(); // "44:00" por ejemplo
+            String[] partes = value.split(":");
+            int hours = Integer.parseInt(partes[0]);
+            // Si quieres sumar minutos:
+            // int minutos = Integer.parseInt(partes[1]);
+            // return horas * 60 + minutos; // Total en minutos
+            return hours;
+        } else {
+            throw new ResourceNotFoundException("No hay configuración de horas semanales. Debe configurarlas primero.");
+        }
+    }
+
+    private void validateMinimumWeeklyHours(String hoursStr) {
+        try {
+            String[] parts = hoursStr.split(":");
+            int hours = Integer.parseInt(parts[0]);
+
+            if (hours < 30) {
+                throw new IllegalArgumentException("El valor mínimo permitido para las horas semanales es 30:00");
+            }
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Formato de horas inválido. Debe ser HH:mm, por ejemplo '30:00'");
+        }
+    }
+
 
 
 }

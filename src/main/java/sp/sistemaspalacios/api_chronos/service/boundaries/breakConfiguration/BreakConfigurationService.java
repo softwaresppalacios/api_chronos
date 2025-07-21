@@ -1,10 +1,9 @@
-package sp.sistemaspalacios.api_chronos.service.breakConfiguration;
+package sp.sistemaspalacios.api_chronos.service.boundaries.breakConfiguration;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import sp.sistemaspalacios.api_chronos.entity.breakConfiguration.BreakConfiguration;
+import sp.sistemaspalacios.api_chronos.entity.boundaries.breakConfiguration.BreakConfiguration;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
-import sp.sistemaspalacios.api_chronos.repository.breakConfiguration.BreakConfigurationRepository;
+import sp.sistemaspalacios.api_chronos.repository.boundaries.breakConfiguration.BreakConfigurationRepository;
 
 import java.util.List;
 import java.util.Optional;
@@ -12,9 +11,11 @@ import java.util.Optional;
 @Service
 public class BreakConfigurationService {
 
-    @Autowired
-    private BreakConfigurationRepository breakConfigurationRepository;
+    private final BreakConfigurationRepository breakConfigurationRepository;
 
+    public BreakConfigurationService(BreakConfigurationRepository breakConfigurationRepository) {
+        this.breakConfigurationRepository = breakConfigurationRepository;
+    }
     /**
      * 🔹 Obtener la configuración actual de break (solo debe haber una)
      */

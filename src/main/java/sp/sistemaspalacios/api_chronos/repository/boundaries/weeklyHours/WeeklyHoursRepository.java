@@ -1,8 +1,8 @@
-package sp.sistemaspalacios.api_chronos.repository.weeklyHours;
+package sp.sistemaspalacios.api_chronos.repository.boundaries.weeklyHours;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
-import sp.sistemaspalacios.api_chronos.entity.weeklyHours.WeeklyHours;
+import sp.sistemaspalacios.api_chronos.entity.boundaries.weeklyHours.WeeklyHours;
 
 import java.util.Optional;
 
