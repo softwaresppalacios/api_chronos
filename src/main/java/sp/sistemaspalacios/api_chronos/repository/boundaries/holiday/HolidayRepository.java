@@ -1,4 +1,4 @@
-package sp.sistemaspalacios.api_chronos.repository.holiday;
+package sp.sistemaspalacios.api_chronos.repository.boundaries.holiday;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;

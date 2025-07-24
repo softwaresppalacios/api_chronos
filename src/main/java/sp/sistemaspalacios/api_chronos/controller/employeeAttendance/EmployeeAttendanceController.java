@@ -14,9 +14,11 @@ import java.util.Date;
 @RequestMapping("/api/attendance")
 public class EmployeeAttendanceController {
 
-    @Autowired
-    private EmployeeAttendanceService service;
+    private final EmployeeAttendanceService service;
 
+    public EmployeeAttendanceController(EmployeeAttendanceService service) {
+        this.service = service;
+    }
     // Clase interna para recibir el JSON en la petición
     public static class AttendanceRequest {
         public Long scheduleId;

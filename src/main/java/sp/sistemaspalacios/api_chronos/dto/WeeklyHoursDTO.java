@@ -1,23 +1,13 @@
 package sp.sistemaspalacios.api_chronos.dto;
 
 import java.time.LocalDateTime;
-
 public class WeeklyHoursDTO {
-
-    private Long id;
-    private String hours;  // Cambiado de Duration a String
+    private String hours;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    public Long id;  // Se guarda solo para lecturas, no se establece al crear un nuevo objeto.
 
-    // Getters y setters
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
+    // Getters and setters
     public String getHours() {
         return hours;
     }
@@ -41,4 +31,10 @@ public class WeeklyHoursDTO {
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
     }
+
+    public Long getId() {
+        return id;
+    }
+
+    // No necesitas un setId aquí si no vas a manejar el ID manualmente.
 }

@@ -19,11 +19,15 @@ import java.util.Optional;
 @Service
 public class EmployeeAttendanceService {
 
-    @Autowired
-    private EmployeeAttendanceRepository repository;
 
-    @Autowired
-    private EmployeeScheduleRepository scheduleRepository;
+    private final EmployeeAttendanceRepository repository;
+    private final EmployeeScheduleRepository scheduleRepository;
+
+    public EmployeeAttendanceService(EmployeeAttendanceRepository repository,
+                                     EmployeeScheduleRepository scheduleRepository) {
+        this.repository = repository;
+        this.scheduleRepository = scheduleRepository;
+    }
 
     @Transactional
     public EmployeeAttendance registerAttendance(Long scheduleId, AttendanceType type) {

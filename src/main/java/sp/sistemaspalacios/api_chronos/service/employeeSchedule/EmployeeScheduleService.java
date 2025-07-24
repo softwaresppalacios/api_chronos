@@ -36,23 +36,25 @@ import java.time.LocalTime;
 @Service
 public class EmployeeScheduleService {
 
-    @Autowired
     private final EmployeeScheduleRepository employeeScheduleRepository;
     private final ShiftsRepository shiftsRepository;
     private final RestTemplate restTemplate;
     private final EmployeeScheduleDayRepository employeeScheduleDayRepository;
     private final EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository;
-    private final EmployeeScheduleRepository employeeRepository;
-    public EmployeeScheduleService(EmployeeScheduleRepository employeeScheduleRepository,
-                                   ShiftsRepository shiftsRepository,
-                                   RestTemplate restTemplate,
-                                   EmployeeScheduleDayRepository employeeScheduleDayRepository, EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository, EmployeeScheduleRepository employeeRepository) {
+
+    // Usa SOLO inyección por constructor
+    public EmployeeScheduleService(
+            EmployeeScheduleRepository employeeScheduleRepository,
+            ShiftsRepository shiftsRepository,
+            RestTemplate restTemplate,
+            EmployeeScheduleDayRepository employeeScheduleDayRepository,
+            EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository
+    ) {
         this.employeeScheduleRepository = employeeScheduleRepository;
         this.shiftsRepository = shiftsRepository;
         this.restTemplate = restTemplate;
         this.employeeScheduleDayRepository = employeeScheduleDayRepository;
         this.employeeScheduleTimeBlockRepository = employeeScheduleTimeBlockRepository;
-        this.employeeRepository = employeeRepository;
     }
 
     /** 🔹 Obtiene todos los horarios de empleados */

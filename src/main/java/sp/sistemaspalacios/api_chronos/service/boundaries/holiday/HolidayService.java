@@ -1,10 +1,9 @@
-package sp.sistemaspalacios.api_chronos.service.holiday;
+package sp.sistemaspalacios.api_chronos.service.boundaries.holiday;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import sp.sistemaspalacios.api_chronos.entity.holiday.Holiday;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
-import sp.sistemaspalacios.api_chronos.repository.holiday.HolidayRepository;
+import sp.sistemaspalacios.api_chronos.repository.boundaries.holiday.HolidayRepository;
 
 import java.util.List;
 import java.util.Optional;
@@ -12,9 +11,11 @@ import java.util.Optional;
 @Service
 public class HolidayService {
 
-    @Autowired
-    private HolidayRepository holidayRepository;
+    private final HolidayRepository holidayRepository;
 
+    public HolidayService(HolidayRepository holidayRepository) {
+        this.holidayRepository = holidayRepository;
+    }
     public List<Holiday> getAllHolidays() {
         return holidayRepository.findAll();
     }

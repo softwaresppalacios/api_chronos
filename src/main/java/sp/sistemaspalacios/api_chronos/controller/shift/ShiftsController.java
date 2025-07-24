@@ -17,9 +17,11 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/shifts")
 public class ShiftsController {
 
-    @Autowired
-    private ShiftsService shiftsService;
+    private final ShiftsService shiftsService;
 
+    public ShiftsController(ShiftsService shiftsService) {
+        this.shiftsService = shiftsService;
+    }
     // Obtener todos los turnos
     @GetMapping
     public ResponseEntity<List<Shifts>> getAllShifts() {
