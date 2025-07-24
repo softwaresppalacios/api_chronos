@@ -47,9 +47,6 @@ public class ShiftDetailController {
         return ResponseEntity.ok(dtos);
     }
 
-    /**
-     * 🔹 Crear shift detail (retorna el resumen de horas programadas/faltantes)
-     */
     @PostMapping
     public ResponseEntity<?> createShiftDetail(@RequestBody ShiftDetail shiftDetail) {
         try {
@@ -57,7 +54,6 @@ public class ShiftDetailController {
             ShiftDetail created = shiftDetailService.createShiftDetail(processedEntity);
             ShiftDetailDTO responseDTO = convertToDTO(created);
 
-            // Resumen de horas
             Map<String, Object> hoursSummary = shiftDetailService.getWeeklyHoursSummary(created.getShift().getId());
 
             Map<String, Object> response = new HashMap<>();
@@ -74,9 +70,6 @@ public class ShiftDetailController {
         }
     }
 
-    /**
-     * 🔹 Actualizar shift detail (también retorna el resumen)
-     */
     @PutMapping("/{id}")
     public ResponseEntity<?> updateShiftDetail(@PathVariable Long id, @RequestBody ShiftDetail shiftDetail) {
         try {
@@ -84,7 +77,6 @@ public class ShiftDetailController {
             ShiftDetail updated = shiftDetailService.updateShiftDetail(id, processedEntity);
             ShiftDetailDTO responseDTO = convertToDTO(updated);
 
-            // Resumen de horas
             Map<String, Object> hoursSummary = shiftDetailService.getWeeklyHoursSummary(updated.getShift().getId());
 
             Map<String, Object> response = new HashMap<>();
@@ -105,17 +97,14 @@ public class ShiftDetailController {
     public ResponseEntity<?> deleteShiftDetail(@PathVariable Long id) {
         try {
             shiftDetailService.deleteShiftDetail(id);
-
             Map<String, String> response = new HashMap<>();
             response.put("message", "Detalle de turno eliminado exitosamente");
-
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
             return handleError(e.getMessage());
         }
     }
 
-    // Convertir Entity a DTO
     private ShiftDetailDTO convertToDTO(ShiftDetail entity) {
         return new ShiftDetailDTO(
                 entity.getId(),
@@ -129,12 +118,9 @@ public class ShiftDetailController {
                 entity.getWeeklyHours(),
                 entity.getNightHoursStart(),
                 entity.getHoursPerDay()
-
-
         );
     }
 
-    // Convertir DTO/JSON a Entity
     private ShiftDetail convertToEntity(ShiftDetailDTO dto) {
         ShiftDetail entity = new ShiftDetail();
         entity.setId(dto.getId());
@@ -169,8 +155,8 @@ public class ShiftDetailController {
     public ResponseEntity<?> getBreakInfo() {
         try {
             Map<String, Object> response = new HashMap<>();
-            response.put("message", "Para obtener la configuración de break, use /api/break-config");
-            response.put("breakConfigEndpoint", "/api/break-config/minutes");
+            response.put("message", "Para obtener la configuración de break, use /api/config/BREAK");
+            response.put("breakConfigEndpoint", "/api/config/BREAK");
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             return handleError("Error obteniendo información de break: " + e.getMessage());
