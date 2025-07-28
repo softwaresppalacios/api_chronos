@@ -127,19 +127,22 @@ public class WeeklyHoursService {
         }
     }
 
-    // 🔒 Validación para descanso (mínimo 30 minutos)
-    // 🔒 Validación para descanso (mínimo 30 minutos)
-    // 🔒 Validación para descanso (mínimo 30 minutos)
+
+    // Validación para descanso (mínimo 30 minutos)
     public void validateMinimumBreakMinutes(String value) {
         try {
-            int minutes = Integer.parseInt(value); // ✅ solo acepta números puros
+            int minutes = Integer.parseInt(value);
             if (minutes < 30) {
                 throw new IllegalArgumentException("El descanso mínimo permitido es de 30 minutos.");
+            }
+            if (minutes > 45) {
+                throw new IllegalArgumentException("El descanso máximo permitido es de 45 minutos.");
             }
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("El valor del descanso debe ser un número en minutos. Ej: '30'");
         }
     }
+
 
 
 }
