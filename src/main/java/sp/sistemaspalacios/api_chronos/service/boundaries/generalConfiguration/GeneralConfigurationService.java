@@ -50,8 +50,8 @@ public class GeneralConfigurationService {
                     throw new IllegalArgumentException("Formato inválido para DAILY_HOURS. Usa un número decimal como '9.5'.");
                 }
 
-                if (decimalHours < 5.0) {
-                    throw new IllegalArgumentException("El valor mínimo para DAILY_HOURS debe ser 5.0 (5 horas).");
+                if (decimalHours < 3.0) {
+                    throw new IllegalArgumentException("El valor mínimo para DAILY_HOURS debe ser 3.0 (3 horas).");
                 }
 
                 // Opcional: podrías validar que no sea mayor a un límite razonable, como 24.0
