@@ -33,18 +33,16 @@ public class ShiftDetail {
     private Integer breakMinutes;
 
     @Column(name = "weekly_hours")
-    private Integer weeklyHours;
+    private String weeklyHours;  // ✅ String para mantener formatos como "44:30" o "48.5"
+
+    @Column(name = "hours_per_day")
+    private String hoursPerDay;  // ✅ String para mantener "8.5" u otros
 
     @Column(name = "night_hours_start")
     private String nightHoursStart;
 
     @Column(name = "night_hours_end")
     private String nightHoursEnd;
-
-    @Column(name = "hours_per_day")
-    private Integer hoursPerDay;
-
-
 
     @Column(name = "created_at", nullable = false, updatable = false)
     @Temporal(TemporalType.TIMESTAMP)

@@ -41,15 +41,20 @@ public class ShiftDetailService {
     public ShiftDetail createShiftDetail(ShiftDetail shiftDetail) {
         validateShiftDetail(shiftDetail);
 
-        int configuredBreakMinutes = Integer.parseInt(generalConfigurationService.getByType("BREAK").getValue());
-        int weeklyHours = parseHoursFromValue(generalConfigurationService.getByType("WEEKLY_HOURS").getValue());
-        int hoursPerDay = parseHoursFromValue(generalConfigurationService.getByType("DAILY_HOURS").getValue());
+        // ✅ Preservar formato original de configuración
+        int configuredBreakMinutes = parseBreakMinutes(generalConfigurationService.getByType("BREAK").getValue());
+        String weeklyHoursOriginal = generalConfigurationService.getByType("WEEKLY_HOURS").getValue();
+        String hoursPerDayOriginal = generalConfigurationService.getByType("DAILY_HOURS").getValue();
         String nightStart = generalConfigurationService.getByType("NIGHT_START").getValue();
 
+        // Validar que los valores sean parseables (pero mantener formato original)
+        parseHoursFromValue(weeklyHoursOriginal); // Solo para validar
+        parseHoursFromValue(hoursPerDayOriginal); // Solo para validar
+
         shiftDetail.setBreakMinutes(configuredBreakMinutes);
-        shiftDetail.setWeeklyHours(weeklyHours);
+        shiftDetail.setWeeklyHours(weeklyHoursOriginal); // ✅ Guardar formato original
         shiftDetail.setNightHoursStart(nightStart);
-        shiftDetail.setHoursPerDay(hoursPerDay);
+        shiftDetail.setHoursPerDay(hoursPerDayOriginal); // ✅ Guardar formato original
 
         List<ShiftDetail> allBlocks = shiftDetailRepository
                 .findByShiftIdAndDayOfWeek(shiftDetail.getShift().getId(), shiftDetail.getDayOfWeek());
@@ -70,15 +75,20 @@ public class ShiftDetailService {
     public ShiftDetail updateShiftDetail(Long id, ShiftDetail shiftDetail) {
         validateShiftDetail(shiftDetail);
 
-        int configuredBreakMinutes = Integer.parseInt(generalConfigurationService.getByType("BREAK").getValue());
-        int weeklyHours = parseHoursFromValue(generalConfigurationService.getByType("WEEKLY_HOURS").getValue());
-        int hoursPerDay = parseHoursFromValue(generalConfigurationService.getByType("DAILY_HOURS").getValue());
+        // ✅ Preservar formato original de configuración
+        int configuredBreakMinutes = parseBreakMinutes(generalConfigurationService.getByType("BREAK").getValue());
+        String weeklyHoursOriginal = generalConfigurationService.getByType("WEEKLY_HOURS").getValue();
+        String hoursPerDayOriginal = generalConfigurationService.getByType("DAILY_HOURS").getValue();
         String nightStart = generalConfigurationService.getByType("NIGHT_START").getValue();
 
+        // Validar que los valores sean parseables (pero mantener formato original)
+        parseHoursFromValue(weeklyHoursOriginal); // Solo para validar
+        parseHoursFromValue(hoursPerDayOriginal); // Solo para validar
+
         shiftDetail.setBreakMinutes(configuredBreakMinutes);
-        shiftDetail.setWeeklyHours(weeklyHours);
+        shiftDetail.setWeeklyHours(weeklyHoursOriginal); // ✅ Guardar formato original
         shiftDetail.setNightHoursStart(nightStart);
-        shiftDetail.setHoursPerDay(hoursPerDay);
+        shiftDetail.setHoursPerDay(hoursPerDayOriginal); // ✅ Guardar formato original
 
         List<ShiftDetail> allBlocks = shiftDetailRepository
                 .findByShiftIdAndDayOfWeek(shiftDetail.getShift().getId(), shiftDetail.getDayOfWeek());
@@ -148,6 +158,7 @@ public class ShiftDetailService {
             return true;
         }
     }
+
     public Map<String, Object> getWeeklyHoursSummary(Long shiftId) {
         List<ShiftDetail> details = shiftDetailRepository.findByShiftId(shiftId);
 
@@ -168,7 +179,6 @@ public class ShiftDetailService {
                 }
 
             } catch (ParseException e) {
-                // Puedes manejar mejor este error si quieres
                 throw new RuntimeException("Error al calcular duración: " + e.getMessage());
             }
         }
@@ -176,8 +186,9 @@ public class ShiftDetailService {
         int totalHours = totalMinutes / 60;
         int remainingMinutes = totalMinutes % 60;
 
-        int weeklyLimit = parseHoursFromValue(generalConfigurationService.getByType("WEEKLY_HOURS").getValue());
-        int weeklyLimitMinutes = weeklyLimit * 60;
+        // ✅ Para el cálculo sí necesitamos convertir a decimal, pero solo internamente
+        double weeklyLimit = parseHoursFromValue(generalConfigurationService.getByType("WEEKLY_HOURS").getValue());
+        int weeklyLimitMinutes = (int)(weeklyLimit * 60);
 
         Map<String, Object> result = new HashMap<>();
         result.put("totalWorkedMinutes", totalMinutes);
@@ -264,9 +275,59 @@ public class ShiftDetailService {
         }
     }
 
-    private int parseHoursFromValue(String value) {
-        String[] parts = value.split(":");
-        int hours = Integer.parseInt(parts[0]);
-        return hours;
+    // ✅ MÉTODO MEJORADO: Parsea horas para validación y cálculos internos
+    private double parseHoursFromValue(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return 0.0;
+        }
+
+        value = value.trim();
+
+        try {
+            // Si contiene ":", es formato HH:MM
+            if (value.contains(":")) {
+                String[] parts = value.split(":");
+                if (parts.length != 2) {
+                    throw new IllegalArgumentException("Formato de hora inválido: " + value);
+                }
+
+                int hours = Integer.parseInt(parts[0]);
+                int minutes = Integer.parseInt(parts[1]);
+
+                // Validar rangos
+                if (hours < 0 || minutes < 0 || minutes >= 60) {
+                    throw new IllegalArgumentException("Valores de hora inválidos: " + value);
+                }
+
+                return hours + (minutes / 60.0);
+            }
+            // Si no, es un número decimal directo como "8.5"
+            else {
+                double hours = Double.parseDouble(value);
+                if (hours < 0) {
+                    throw new IllegalArgumentException("Las horas no pueden ser negativas: " + value);
+                }
+                return hours;
+            }
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Formato de hora inválido: " + value + ". Debe ser formato HH:MM o decimal (ej: 8.5)");
+        }
+    }
+
+    // ✅ MÉTODO PARA PARSEAR MINUTOS DE BREAK
+    private int parseBreakMinutes(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return 0;
+        }
+
+        try {
+            double minutes = Double.parseDouble(value.trim());
+            if (minutes < 0) {
+                throw new IllegalArgumentException("Los minutos de break no pueden ser negativos: " + value);
+            }
+            return (int) Math.round(minutes);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Valor de break inválido: " + value + ". Debe ser un número.");
+        }
     }
 }
