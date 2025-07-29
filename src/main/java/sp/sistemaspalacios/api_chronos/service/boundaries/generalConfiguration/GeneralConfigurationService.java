@@ -85,20 +85,21 @@ public class GeneralConfigurationService {
                 } else if (rawValue.toLowerCase().contains("minute")) {
                     // ✅ Caso "30 minutes"
                     totalMinutes = Integer.parseInt(rawValue.replaceAll("[^0-9]", ""));
-                } else if (rawValue.contains(":")) {
+                } else if (rawValue.matches("^\\d+:\\d+$")) {
                     // ✅ Caso "00:30"
                     String[] parts = rawValue.split(":");
                     int hours = Integer.parseInt(parts[0]);
                     int minutes = Integer.parseInt(parts[1]);
                     totalMinutes = hours * 60 + minutes;
                 } else {
-                    throw new IllegalArgumentException("Formato no válido para BREAK. Usa un número como '30', '30 minutes' o '00:30'.");
+                    throw new IllegalArgumentException("Formato no válido para BREAK. Usa '30', '30 minutes' o '00:30'. No se permiten decimales como '9.8'.");
                 }
 
                 if (totalMinutes < 30) {
                     throw new IllegalArgumentException("El tiempo mínimo de descanso (BREAK) debe ser 30 minutos.");
                 }
             }
+
 
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Formato inválido. Usa '30', '30 minutes' o '00:30'.");
