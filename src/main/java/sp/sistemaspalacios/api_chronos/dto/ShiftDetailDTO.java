@@ -6,21 +6,24 @@ public class ShiftDetailDTO {
     private Integer dayOfWeek;
     private String startTime;
     private String endTime;
-    // NUEVOS CAMPOS PARA CONFIGURACIÓN GLOBAL USADA
+
+    // 🔹 Nuevos campos para configuración global
     private Integer breakMinutes;     // Descanso usado cuando se creó
-    private Integer weeklyHours;      // Horas semanales usadas cuando se creó
+    private String weeklyHours;       // Horas semanales usadas cuando se creó
     private String nightHoursStart;   // Hora inicio nocturna usada cuando se creó
-    private Integer hoursPerDay;      // Horas máximas al día usadas cuando se creó
-    // 🔹 NUEVOS CAMPOS PARA EL BREAK
-    private String breakStartTime;  // Hora de inicio del descanso
-    private String breakEndTime;    // Hora de fin del descanso
+    private String hoursPerDay;       // Horas máximas al día usadas cuando se creó
+
+    // 🔹 Nuevos campos para break
+    private String breakStartTime;    // Hora de inicio del descanso
+    private String breakEndTime;      // Hora de fin del descanso
 
     // Constructor por defecto
     public ShiftDetailDTO() {}
 
-    // Constructor completo (para respuestas)
+    // Constructor completo
     public ShiftDetailDTO(Long id, Long shiftId, Integer dayOfWeek, String startTime, String endTime,
-                          String breakStartTime, String breakEndTime,  Integer breakMinutes, Integer weeklyHours, String nightHoursStart, Integer hoursPerDay) {
+                          String breakStartTime, String breakEndTime, Integer breakMinutes,
+                          String weeklyHours, String nightHoursStart, String hoursPerDay) {
         this.id = id;
         this.shiftId = shiftId;
         this.dayOfWeek = dayOfWeek;
@@ -34,7 +37,7 @@ public class ShiftDetailDTO {
         this.hoursPerDay = hoursPerDay;
     }
 
-    // Constructor para crear (sin id)
+    // Constructor básico (crear sin ID)
     public ShiftDetailDTO(Long shiftId, Integer dayOfWeek, String startTime, String endTime,
                           String breakStartTime, String breakEndTime) {
         this.shiftId = shiftId;
@@ -45,78 +48,43 @@ public class ShiftDetailDTO {
         this.breakEndTime = breakEndTime;
     }
 
-    // Constructor legacy (para compatibilidad con código existente)
     public ShiftDetailDTO(Integer dayOfWeek, String startTime, String endTime) {
-        this.dayOfWeek = dayOfWeek;
-        this.startTime = startTime;
-        this.endTime = endTime;
     }
 
     // Getters y Setters
-    public Long getId() {
-        return id;
-    }
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
 
-    public void setId(Long id) {
-        this.id = id;
-    }
+    public Long getShiftId() { return shiftId; }
+    public void setShiftId(Long shiftId) { this.shiftId = shiftId; }
 
-    public Long getShiftId() {
-        return shiftId;
-    }
+    public Integer getDayOfWeek() { return dayOfWeek; }
+    public void setDayOfWeek(Integer dayOfWeek) { this.dayOfWeek = dayOfWeek; }
 
-    public void setShiftId(Long shiftId) {
-        this.shiftId = shiftId;
-    }
+    public String getStartTime() { return startTime; }
+    public void setStartTime(String startTime) { this.startTime = startTime; }
 
-    public Integer getDayOfWeek() {
-        return dayOfWeek;
-    }
+    public String getEndTime() { return endTime; }
+    public void setEndTime(String endTime) { this.endTime = endTime; }
 
-    public void setDayOfWeek(Integer dayOfWeek) {
-        this.dayOfWeek = dayOfWeek;
-    }
+    public String getBreakStartTime() { return breakStartTime; }
+    public void setBreakStartTime(String breakStartTime) { this.breakStartTime = breakStartTime; }
 
-    public String getStartTime() {
-        return startTime;
-    }
+    public String getBreakEndTime() { return breakEndTime; }
+    public void setBreakEndTime(String breakEndTime) { this.breakEndTime = breakEndTime; }
 
-    public void setStartTime(String startTime) {
-        this.startTime = startTime;
-    }
-
-    public String getEndTime() {
-        return endTime;
-    }
-
-    public void setEndTime(String endTime) {
-        this.endTime = endTime;
-    }
-
-    // 🔹 GETTERS Y SETTERS PARA BREAK
-    public String getBreakStartTime() {
-        return breakStartTime;
-    }
-
-    public void setBreakStartTime(String breakStartTime) {
-        this.breakStartTime = breakStartTime;
-    }
-
-    public String getBreakEndTime() {
-        return breakEndTime;
-    }
-
-    public void setBreakEndTime(String breakEndTime) {
-        this.breakEndTime = breakEndTime;
-    }
     public Integer getBreakMinutes() { return breakMinutes; }
     public void setBreakMinutes(Integer breakMinutes) { this.breakMinutes = breakMinutes; }
-    public Integer getWeeklyHours() { return weeklyHours; }
-    public void setWeeklyHours(Integer weeklyHours) { this.weeklyHours = weeklyHours; }
+
+    public String getWeeklyHours() { return weeklyHours; }
+    public void setWeeklyHours(String weeklyHours) { this.weeklyHours = weeklyHours; }
+
     public String getNightHoursStart() { return nightHoursStart; }
     public void setNightHoursStart(String nightHoursStart) { this.nightHoursStart = nightHoursStart; }
-    public Integer getHoursPerDay() { return hoursPerDay; }
-    public void setHoursPerDay(Integer hoursPerDay) { this.hoursPerDay = hoursPerDay; }
+
+    public String getHoursPerDay() { return hoursPerDay; }
+    public void setHoursPerDay(String hoursPerDay) { this.hoursPerDay = hoursPerDay; }
+
     @Override
     public String toString() {
         return "ShiftDetailDTO{" +
@@ -127,6 +95,10 @@ public class ShiftDetailDTO {
                 ", endTime='" + endTime + '\'' +
                 ", breakStartTime='" + breakStartTime + '\'' +
                 ", breakEndTime='" + breakEndTime + '\'' +
+                ", breakMinutes=" + breakMinutes +
+                ", weeklyHours='" + weeklyHours + '\'' +
+                ", nightHoursStart='" + nightHoursStart + '\'' +
+                ", hoursPerDay='" + hoursPerDay + '\'' +
                 '}';
     }
 }

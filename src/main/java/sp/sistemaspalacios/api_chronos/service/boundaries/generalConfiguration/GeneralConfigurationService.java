@@ -43,12 +43,23 @@ public class GeneralConfigurationService {
         try {
             // DAILY_HOURS: mínimo 5:00
             if ("DAILY_HOURS".equalsIgnoreCase(type)) {
-                String[] parts = rawValue.split(":");
-                int hours = Integer.parseInt(parts[0]);
-                if (hours < 5) {
-                    throw new IllegalArgumentException("El valor mínimo para DAILY_HOURS debe ser 5:00 (5 horas).");
+                double decimalHours;
+                try {
+                    decimalHours = Double.parseDouble(rawValue);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("Formato inválido para DAILY_HOURS. Usa un número decimal como '9.5'.");
+                }
+
+                if (decimalHours < 3.0) {
+                    throw new IllegalArgumentException("El valor mínimo para DAILY_HOURS debe ser 3.0 (3 horas).");
+                }
+
+                // Opcional: podrías validar que no sea mayor a un límite razonable, como 24.0
+                if (decimalHours > 24.0) {
+                    throw new IllegalArgumentException("El valor para DAILY_HOURS no puede exceder 24 horas.");
                 }
             }
+
 // NIGHT_START: debe ser >= 19:00
             if ("NIGHT_START".equalsIgnoreCase(type)) {
                 if (!rawValue.matches("^([01]\\d|2[0-3]):[0-5]\\d$")) {
@@ -74,20 +85,21 @@ public class GeneralConfigurationService {
                 } else if (rawValue.toLowerCase().contains("minute")) {
                     // ✅ Caso "30 minutes"
                     totalMinutes = Integer.parseInt(rawValue.replaceAll("[^0-9]", ""));
-                } else if (rawValue.contains(":")) {
+                } else if (rawValue.matches("^\\d+:\\d+$")) {
                     // ✅ Caso "00:30"
                     String[] parts = rawValue.split(":");
                     int hours = Integer.parseInt(parts[0]);
                     int minutes = Integer.parseInt(parts[1]);
                     totalMinutes = hours * 60 + minutes;
                 } else {
-                    throw new IllegalArgumentException("Formato no válido para BREAK. Usa un número como '30', '30 minutes' o '00:30'.");
+                    throw new IllegalArgumentException("Formato no válido para BREAK. Usa '30', '30 minutes' o '00:30'. No se permiten decimales como '9.8'.");
                 }
 
                 if (totalMinutes < 30) {
                     throw new IllegalArgumentException("El tiempo mínimo de descanso (BREAK) debe ser 30 minutos.");
                 }
             }
+
 
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Formato inválido. Usa '30', '30 minutes' o '00:30'.");

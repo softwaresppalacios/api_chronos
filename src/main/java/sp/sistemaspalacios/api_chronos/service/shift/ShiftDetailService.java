@@ -10,6 +10,9 @@ import sp.sistemaspalacios.api_chronos.service.boundaries.generalConfiguration.G
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.Duration;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.regex.Pattern;
 
@@ -41,15 +44,20 @@ public class ShiftDetailService {
     public ShiftDetail createShiftDetail(ShiftDetail shiftDetail) {
         validateShiftDetail(shiftDetail);
 
-        int configuredBreakMinutes = Integer.parseInt(generalConfigurationService.getByType("BREAK").getValue());
-        int weeklyHours = parseHoursFromValue(generalConfigurationService.getByType("WEEKLY_HOURS").getValue());
-        int hoursPerDay = parseHoursFromValue(generalConfigurationService.getByType("DAILY_HOURS").getValue());
+        // ✅ Preservar formato original de configuración
+        int configuredBreakMinutes = parseBreakMinutes(generalConfigurationService.getByType("BREAK").getValue());
+        String weeklyHoursOriginal = generalConfigurationService.getByType("WEEKLY_HOURS").getValue();
+        String hoursPerDayOriginal = generalConfigurationService.getByType("DAILY_HOURS").getValue();
         String nightStart = generalConfigurationService.getByType("NIGHT_START").getValue();
 
+        // Validar que los valores sean parseables (pero mantener formato original)
+        parseHoursFromValue(weeklyHoursOriginal); // Solo para validar
+        parseHoursFromValue(hoursPerDayOriginal); // Solo para validar
+
         shiftDetail.setBreakMinutes(configuredBreakMinutes);
-        shiftDetail.setWeeklyHours(weeklyHours);
+        shiftDetail.setWeeklyHours(weeklyHoursOriginal); // ✅ Guardar formato original
         shiftDetail.setNightHoursStart(nightStart);
-        shiftDetail.setHoursPerDay(hoursPerDay);
+        shiftDetail.setHoursPerDay(hoursPerDayOriginal); // ✅ Guardar formato original
 
         List<ShiftDetail> allBlocks = shiftDetailRepository
                 .findByShiftIdAndDayOfWeek(shiftDetail.getShift().getId(), shiftDetail.getDayOfWeek());
@@ -70,15 +78,20 @@ public class ShiftDetailService {
     public ShiftDetail updateShiftDetail(Long id, ShiftDetail shiftDetail) {
         validateShiftDetail(shiftDetail);
 
-        int configuredBreakMinutes = Integer.parseInt(generalConfigurationService.getByType("BREAK").getValue());
-        int weeklyHours = parseHoursFromValue(generalConfigurationService.getByType("WEEKLY_HOURS").getValue());
-        int hoursPerDay = parseHoursFromValue(generalConfigurationService.getByType("DAILY_HOURS").getValue());
+        // ✅ Preservar formato original de configuración
+        int configuredBreakMinutes = parseBreakMinutes(generalConfigurationService.getByType("BREAK").getValue());
+        String weeklyHoursOriginal = generalConfigurationService.getByType("WEEKLY_HOURS").getValue();
+        String hoursPerDayOriginal = generalConfigurationService.getByType("DAILY_HOURS").getValue();
         String nightStart = generalConfigurationService.getByType("NIGHT_START").getValue();
 
+        // Validar que los valores sean parseables (pero mantener formato original)
+        parseHoursFromValue(weeklyHoursOriginal); // Solo para validar
+        parseHoursFromValue(hoursPerDayOriginal); // Solo para validar
+
         shiftDetail.setBreakMinutes(configuredBreakMinutes);
-        shiftDetail.setWeeklyHours(weeklyHours);
+        shiftDetail.setWeeklyHours(weeklyHoursOriginal); // ✅ Guardar formato original
         shiftDetail.setNightHoursStart(nightStart);
-        shiftDetail.setHoursPerDay(hoursPerDay);
+        shiftDetail.setHoursPerDay(hoursPerDayOriginal); // ✅ Guardar formato original
 
         List<ShiftDetail> allBlocks = shiftDetailRepository
                 .findByShiftIdAndDayOfWeek(shiftDetail.getShift().getId(), shiftDetail.getDayOfWeek());
@@ -130,7 +143,13 @@ public class ShiftDetailService {
         if (!isValidMilitaryTime(shiftDetail.getEndTime())) {
             throw new IllegalArgumentException("La hora de fin debe estar en formato HH:mm (hora militar).");
         }
-        if (isEndTimeBeforeStartTime(shiftDetail.getStartTime(), shiftDetail.getEndTime())) {
+
+        // Validación mejorada para horarios nocturnos
+        LocalTime startTime = LocalTime.parse(shiftDetail.getStartTime());
+        LocalTime endTime = LocalTime.parse(shiftDetail.getEndTime());
+        boolean crossesMidnight = endTime.isBefore(startTime);
+
+        if (!crossesMidnight && (endTime.equals(startTime) || endTime.isBefore(startTime))) {
             throw new IllegalArgumentException("La hora de fin no puede ser menor o igual a la hora de inicio.");
         }
     }
@@ -140,35 +159,49 @@ public class ShiftDetailService {
         return Pattern.matches("^([01]?[0-9]|2[0-3]):([0-5][0-9])$", time);
     }
 
+    // Método deprecado - mantener por compatibilidad pero no usar internamente
+    @Deprecated
     private boolean isEndTimeBeforeStartTime(String startTime, String endTime) {
         try {
-            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
-            return sdf.parse(endTime).before(sdf.parse(startTime)) || sdf.parse(endTime).equals(sdf.parse(startTime));
-        } catch (ParseException e) {
+            LocalTime start = LocalTime.parse(startTime);
+            LocalTime end = LocalTime.parse(endTime);
+            // Si cruza medianoche, no es un error
+            if (end.isBefore(start)) return false;
+            return end.equals(start);
+        } catch (Exception e) {
             return true;
         }
     }
+
     public Map<String, Object> getWeeklyHoursSummary(Long shiftId) {
         List<ShiftDetail> details = shiftDetailRepository.findByShiftId(shiftId);
 
         int totalMinutes = 0;
         for (ShiftDetail d : details) {
             try {
-                SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
-                Date start = sdf.parse(d.getStartTime());
-                Date end = sdf.parse(d.getEndTime());
-                long duration = (end.getTime() - start.getTime()) / (1000 * 60);
+                LocalTime start = LocalTime.parse(d.getStartTime());
+                LocalTime end = LocalTime.parse(d.getEndTime());
+
+                // Calcular duración considerando cruces de medianoche
+                long duration;
+                if (end.isBefore(start)) {
+                    // Cruza medianoche
+                    duration = ChronoUnit.MINUTES.between(start, LocalTime.MAX) +
+                            ChronoUnit.MINUTES.between(LocalTime.MIN, end) + 1;
+                } else {
+                    duration = ChronoUnit.MINUTES.between(start, end);
+                }
                 totalMinutes += duration;
 
+                // Restar breaks
                 if (d.getBreakStartTime() != null && d.getBreakEndTime() != null) {
-                    Date breakStart = sdf.parse(d.getBreakStartTime());
-                    Date breakEnd = sdf.parse(d.getBreakEndTime());
-                    long breakDuration = (breakEnd.getTime() - breakStart.getTime()) / (1000 * 60);
+                    LocalTime breakStart = LocalTime.parse(d.getBreakStartTime());
+                    LocalTime breakEnd = LocalTime.parse(d.getBreakEndTime());
+                    long breakDuration = ChronoUnit.MINUTES.between(breakStart, breakEnd);
                     totalMinutes -= breakDuration;
                 }
 
-            } catch (ParseException e) {
-                // Puedes manejar mejor este error si quieres
+            } catch (Exception e) {
                 throw new RuntimeException("Error al calcular duración: " + e.getMessage());
             }
         }
@@ -176,8 +209,9 @@ public class ShiftDetailService {
         int totalHours = totalMinutes / 60;
         int remainingMinutes = totalMinutes % 60;
 
-        int weeklyLimit = parseHoursFromValue(generalConfigurationService.getByType("WEEKLY_HOURS").getValue());
-        int weeklyLimitMinutes = weeklyLimit * 60;
+        // ✅ Para el cálculo sí necesitamos convertir a decimal, pero solo internamente
+        double weeklyLimit = parseHoursFromValue(generalConfigurationService.getByType("WEEKLY_HOURS").getValue());
+        int weeklyLimitMinutes = (int)(weeklyLimit * 60);
 
         Map<String, Object> result = new HashMap<>();
         result.put("totalWorkedMinutes", totalMinutes);
@@ -196,8 +230,15 @@ public class ShiftDetailService {
             throw new IllegalArgumentException("Hora inicio break inválida.");
         if (!isValidMilitaryTime(shiftDetail.getBreakEndTime()))
             throw new IllegalArgumentException("Hora fin break inválida.");
-        if (isStartTimeAfterEndTime(shiftDetail.getBreakStartTime(), shiftDetail.getBreakEndTime()))
-            throw new IllegalArgumentException("El break no puede terminar antes de comenzar.");
+
+        // Validación mejorada para breaks
+        LocalTime breakStart = LocalTime.parse(shiftDetail.getBreakStartTime());
+        LocalTime breakEnd = LocalTime.parse(shiftDetail.getBreakEndTime());
+
+        if (breakEnd.isBefore(breakStart) || breakEnd.equals(breakStart)) {
+            throw new IllegalArgumentException("El break no puede terminar antes o al mismo tiempo que comienza.");
+        }
+
         validateBreakWithinWorkingHours(shiftDetail);
         validateBreakDuration(shiftDetail, configuredBreakMinutes);
     }
@@ -221,52 +262,129 @@ public class ShiftDetailService {
 
     private void validateBreakWithinWorkingHours(ShiftDetail shiftDetail) {
         try {
-            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
-            Date workStart = sdf.parse(shiftDetail.getStartTime());
-            Date workEnd = sdf.parse(shiftDetail.getEndTime());
-            Date breakStart = sdf.parse(shiftDetail.getBreakStartTime());
-            Date breakEnd = sdf.parse(shiftDetail.getBreakEndTime());
-            if (!breakStart.after(workStart) || !breakEnd.before(workEnd)) {
-                throw new IllegalArgumentException("El break debe estar dentro del rango laboral.");
+            LocalTime workStart = LocalTime.parse(shiftDetail.getStartTime());
+            LocalTime workEnd = LocalTime.parse(shiftDetail.getEndTime());
+            LocalTime breakStart = LocalTime.parse(shiftDetail.getBreakStartTime());
+            LocalTime breakEnd = LocalTime.parse(shiftDetail.getBreakEndTime());
+
+            boolean shiftCrossesMidnight = workEnd.isBefore(workStart);
+
+            if (shiftCrossesMidnight) {
+                // Para turnos que cruzan medianoche, validar que el break esté en el rango correcto
+                boolean breakIsValid = false;
+
+                // El break puede estar en la parte PM del turno (después del inicio)
+                if (breakStart.isAfter(workStart) && breakEnd.isAfter(breakStart)) {
+                    breakIsValid = true;
+                }
+                // O puede estar en la parte AM del turno (antes del fin)
+                else if (breakEnd.isBefore(workEnd) && breakStart.isBefore(breakEnd)) {
+                    breakIsValid = true;
+                }
+
+                if (!breakIsValid) {
+                    throw new IllegalArgumentException("El break debe estar dentro del rango laboral.");
+                }
+            } else {
+                // Turno normal: validación estándar
+                if (!breakStart.isAfter(workStart) || !breakEnd.isBefore(workEnd)) {
+                    throw new IllegalArgumentException("El break debe estar dentro del rango laboral.");
+                }
             }
-        } catch (ParseException e) {
+        } catch (Exception e) {
+            if (e instanceof IllegalArgumentException) {
+                throw e;
+            }
             throw new IllegalArgumentException("Formato de hora inválido en validación de break.");
         }
     }
 
     private int calculateBreakMinutes(String breakStartTime, String breakEndTime) {
         try {
-            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
-            long diff = sdf.parse(breakEndTime).getTime() - sdf.parse(breakStartTime).getTime();
-            return (int) (diff / (1000 * 60));
-        } catch (ParseException e) {
+            LocalTime start = LocalTime.parse(breakStartTime);
+            LocalTime end = LocalTime.parse(breakEndTime);
+            return (int) ChronoUnit.MINUTES.between(start, end);
+        } catch (Exception e) {
             throw new IllegalArgumentException("Formato de hora inválido: " + e.getMessage());
         }
     }
 
     private String sumarMinutosAHora(String hora, int minutosASumar) {
         try {
-            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
-            Date date = sdf.parse(hora);
-            long newTime = date.getTime() + (minutosASumar * 60 * 1000);
-            return sdf.format(new Date(newTime));
-        } catch (ParseException e) {
+            LocalTime time = LocalTime.parse(hora);
+            LocalTime newTime = time.plusMinutes(minutosASumar);
+            return newTime.format(DateTimeFormatter.ofPattern("HH:mm"));
+        } catch (Exception e) {
             throw new IllegalArgumentException("Formato de hora inválido: " + e.getMessage());
         }
     }
 
+    // Método deprecado - mantener por compatibilidad
+    @Deprecated
     private boolean isStartTimeAfterEndTime(String startTime, String endTime) {
         try {
-            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm");
-            return sdf.parse(startTime).after(sdf.parse(endTime));
-        } catch (ParseException e) {
+            LocalTime start = LocalTime.parse(startTime);
+            LocalTime end = LocalTime.parse(endTime);
+            // Los breaks no deben cruzar medianoche
+            return start.isAfter(end);
+        } catch (Exception e) {
             return true;
         }
     }
 
-    private int parseHoursFromValue(String value) {
-        String[] parts = value.split(":");
-        int hours = Integer.parseInt(parts[0]);
-        return hours;
+    // ✅ MÉTODO MEJORADO: Parsea horas para validación y cálculos internos
+    private double parseHoursFromValue(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return 0.0;
+        }
+
+        value = value.trim();
+
+        try {
+            // Si contiene ":", es formato HH:MM
+            if (value.contains(":")) {
+                String[] parts = value.split(":");
+                if (parts.length != 2) {
+                    throw new IllegalArgumentException("Formato de hora inválido: " + value);
+                }
+
+                int hours = Integer.parseInt(parts[0]);
+                int minutes = Integer.parseInt(parts[1]);
+
+                // Validar rangos
+                if (hours < 0 || minutes < 0 || minutes >= 60) {
+                    throw new IllegalArgumentException("Valores de hora inválidos: " + value);
+                }
+
+                return hours + (minutes / 60.0);
+            }
+            // Si no, es un número decimal directo como "8.5"
+            else {
+                double hours = Double.parseDouble(value);
+                if (hours < 0) {
+                    throw new IllegalArgumentException("Las horas no pueden ser negativas: " + value);
+                }
+                return hours;
+            }
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Formato de hora inválido: " + value + ". Debe ser formato HH:MM o decimal (ej: 8.5)");
+        }
+    }
+
+    // ✅ MÉTODO PARA PARSEAR MINUTOS DE BREAK
+    private int parseBreakMinutes(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return 0;
+        }
+
+        try {
+            double minutes = Double.parseDouble(value.trim());
+            if (minutes < 0) {
+                throw new IllegalArgumentException("Los minutos de break no pueden ser negativos: " + value);
+            }
+            return (int) Math.round(minutes);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("Valor de break inválido: " + value + ". Debe ser un número.");
+        }
     }
 }
