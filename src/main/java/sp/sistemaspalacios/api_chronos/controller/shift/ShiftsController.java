@@ -122,7 +122,17 @@ public class ShiftsController {
     }
 
 
-
+    @GetMapping("/check-outdated")
+    public ResponseEntity<?> checkOutdatedShifts() {
+        try {
+            Map<String, Object> result = shiftsService.checkOutdatedShifts();
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Error verificando turnos: " + e.getMessage());
+            return ResponseEntity.badRequest().body(error);
+        }
+    }
 
 
 }
