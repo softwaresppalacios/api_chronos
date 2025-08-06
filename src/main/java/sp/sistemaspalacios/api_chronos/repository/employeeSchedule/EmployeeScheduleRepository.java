@@ -68,22 +68,11 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
 
 
-
-
-
-
-
-
-
     @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
             "LEFT JOIN FETCH es.days d " +
             "WHERE es.employeeId IN :employeeIds AND " +
             "EXISTS (SELECT 1 FROM EmployeeScheduleTimeBlock t WHERE t.employeeScheduleDay = d)")
     List<EmployeeSchedule> findByEmployeeIdIn(@Param("employeeIds") List<Long> employeeIds);
-
-
-
-
 
 
 
@@ -105,25 +94,6 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     // Para cuando todos los parámetros están presentes
     @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
             "JOIN es.shift s " +
@@ -138,18 +108,6 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             @Param("startDate") LocalDate startDate,
             @Param("endDate") LocalDate endDate,
             @Param("startTime") Time startTime);
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     @Query("SELECT es FROM EmployeeSchedule es " +
@@ -184,54 +142,13 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
-            "JOIN es.shift s " +
-            "JOIN es.days d " +
-            "LEFT JOIN d.timeBlocks tb " +
+            "JOIN es.shift s JOIN es.days d LEFT JOIN d.timeBlocks tb " +
             "WHERE s.dependencyId = :dependencyId " +
             "AND d.date >= :startDate " +
-            //"AND d.date <= :endDate " +
-            "AND tb.startTime = :startTime")
+            "AND d.date <= :endDate " +           // ← YA CORREGIDO
+            "AND tb.startTime = :startTime " +
+            "AND s.id = :shiftId")                // ← YA CORREGIDO
     List<EmployeeSchedule> findByDependencyIdAndFullDateRangeAndShiftId(
             @Param("dependencyId") Long dependencyId,
             @Param("startDate") LocalDate startDate,
@@ -247,12 +164,13 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             @Param("dependencyId") Long dependencyId,
             @Param("shiftId") Long shiftId);
 
+    // ✅ CORREGIDO: Agregado :endDate
     @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
             "JOIN es.shift s " +
             "JOIN es.days d " +
             "WHERE s.dependencyId = :dependencyId " +
-            "AND d.date >= :startDate "
-            )
+            "AND d.date >= :startDate " +
+            "AND d.date <= :endDate")
     List<EmployeeSchedule> findByDependencyIdAndDateRangeNoTime(
             @Param("dependencyId") Long dependencyId,
             @Param("startDate") LocalDate startDate,
@@ -265,19 +183,20 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             "WHERE s.dependencyId = :dependencyId " +
             "AND tb.startTime = :startTime")
     List<EmployeeSchedule> findByDependencyIdAndStartTime(
-                    @Param("dependencyId") Long dependencyId,
-                    @Param("startTime") Time startTime);
+            @Param("dependencyId") Long dependencyId,
+            @Param("startTime") Time startTime);
 
 
 
 
+    // ✅ CORREGIDO: Agregado :endDate
     @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
             "JOIN es.shift s " +
             "JOIN es.days d " +
             "LEFT JOIN d.timeBlocks tb " +
             "WHERE s.dependencyId = :dependencyId " +
-            "AND CAST(d.date AS DATE) >= :startDate " +  // Comparar solo la fecha sin hora
-               // Comparar solo la fecha sin hora
+            "AND CAST(d.date AS DATE) >= :startDate " +
+            "AND CAST(d.date AS DATE) <= :endDate " +
             "AND s.id = :shiftId")
     List<EmployeeSchedule> findByDependencyIdAndDateRangeAndShiftId(
             @Param("dependencyId") Long dependencyId,
@@ -286,11 +205,3 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             @Param("shiftId") Long shiftId);
 
 }
-
-
-
-
-
-
-
-
