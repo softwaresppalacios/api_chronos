@@ -517,11 +517,6 @@ public class EmployeeScheduleService {
     }
 
 
-
-
-
-
-
     @Transactional
     public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId, LocalDate startDate, LocalDate endDate, LocalTime startTime, Long shiftId) {
         List<EmployeeSchedule> schedules;
