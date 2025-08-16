@@ -1,15 +1,11 @@
 package sp.sistemaspalacios.api_chronos.service.shift;
 
 import org.springframework.stereotype.Service;
-import sp.sistemaspalacios.api_chronos.dto.NightHoursDTO;
 import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftDetailRepository;
 import sp.sistemaspalacios.api_chronos.service.boundaries.generalConfiguration.GeneralConfigurationService;
 
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
-import java.time.Duration;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;

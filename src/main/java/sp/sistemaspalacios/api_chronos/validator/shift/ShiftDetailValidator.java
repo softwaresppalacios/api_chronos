@@ -1,17 +1,11 @@
 package sp.sistemaspalacios.api_chronos.validator.shift;
 
 import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
-import sp.sistemaspalacios.api_chronos.entity.boundaries.weeklyHours.WeeklyHours;
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftDetailRepository;
-import sp.sistemaspalacios.api_chronos.repository.boundaries.weeklyHours.WeeklyHoursRepository;
-import sp.sistemaspalacios.api_chronos.service.boundaries.breakConfiguration.BreakConfigurationService;
+import sp.sistemaspalacios.api_chronos.service.boundaries.generalConfiguration.GeneralConfigurationService;
 
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.Date;
 import java.util.List;
 import java.util.regex.Pattern;
 
@@ -19,18 +13,19 @@ public class ShiftDetailValidator {
 
     public static void validateShiftDetail(
             ShiftDetail shiftDetail,
-            BreakConfigurationService breakConfigurationService,
-            ShiftDetailRepository shiftDetailRepository,
-            WeeklyHoursRepository weeklyHoursRepository
+            GeneralConfigurationService generalConfigurationService, // ✅ Solo este servicio
+            ShiftDetailRepository shiftDetailRepository
     ) {
         // 1. Validar turno
         if (shiftDetail.getShift() == null || shiftDetail.getShift().getId() == null) {
             throw new IllegalArgumentException("El turno (Shift) es obligatorio.");
         }
+
         // 2. Día de la semana
         if (shiftDetail.getDayOfWeek() == null || shiftDetail.getDayOfWeek() < 1 || shiftDetail.getDayOfWeek() > 7) {
             throw new IllegalArgumentException("El día de la semana debe ser entre 1 (Lunes) y 7 (Domingo).");
         }
+
         // 3. Formato hora militar start/end
         if (!isValidMilitaryTime(shiftDetail.getStartTime())) {
             throw new IllegalArgumentException("La hora de inicio debe estar en formato HH:mm (hora militar).");
@@ -38,6 +33,7 @@ public class ShiftDetailValidator {
         if (!isValidMilitaryTime(shiftDetail.getEndTime())) {
             throw new IllegalArgumentException("La hora de fin debe estar en formato HH:mm (hora militar).");
         }
+
         // 4. Horas no nulas
         if (shiftDetail.getStartTime() == null || shiftDetail.getEndTime() == null) {
             throw new IllegalArgumentException("Las horas de inicio y fin no pueden ser nulas.");
@@ -57,10 +53,8 @@ public class ShiftDetailValidator {
         // 6. Cálculo correcto de duración para validaciones
         long durationHours = calculateShiftDuration(startTime, endTime);
 
-        // 7. Máximo diario (9 horas)
-        if (durationHours > 9) {
-            throw new IllegalArgumentException("La diferencia entre las horas de inicio y fin no puede ser mayor a 9 horas.");
-        }
+        // 7. Validar contra DAILY_HOURS de configuración
+        validateDailyHours(durationHours, generalConfigurationService);
 
         // 8. Mínimo diario (2 horas)
         if (durationHours < 2) {
@@ -68,10 +62,29 @@ public class ShiftDetailValidator {
         }
 
         // 9. Validación de horas semanales
-        validateWeeklyHours(shiftDetail, shiftDetailRepository, weeklyHoursRepository);
+        validateWeeklyHours(shiftDetail, shiftDetailRepository, generalConfigurationService);
 
         // 10. Validaciones de Break
-        validateBreakTimes(shiftDetail, breakConfigurationService, shiftDetailRepository);
+        validateBreakTimes(shiftDetail, generalConfigurationService, shiftDetailRepository);
+    }
+
+    // ✅ NUEVO: Validar horas diarias usando DAILY_HOURS
+    private static void validateDailyHours(long durationHours, GeneralConfigurationService configService) {
+        try {
+            String dailyHoursValue = configService.getByType("DAILY_HOURS").getValue();
+            double maxDailyHours = Double.parseDouble(dailyHoursValue);
+
+            if (durationHours > maxDailyHours) {
+                throw new IllegalArgumentException(
+                        String.format("La duración del turno (%.1f horas) excede el límite diario configurado de %.1f horas.",
+                                (double) durationHours, maxDailyHours));
+            }
+        } catch (IllegalArgumentException e) {
+            // Si no hay configuración DAILY_HOURS, usar fallback de 9 horas
+            if (durationHours > 9) {
+                throw new IllegalArgumentException("La diferencia entre las horas de inicio y fin no puede ser mayor a 9 horas.");
+            }
+        }
     }
 
     // Calcular duración considerando turnos que cruzan medianoche
@@ -126,14 +139,14 @@ public class ShiftDetailValidator {
         return duration < minHours;
     }
 
-    // Horas semanales
+    // ✅ ACTUALIZADO: Horas semanales usando GeneralConfiguration
     public static void validateWeeklyHours(
             ShiftDetail shiftDetail,
             ShiftDetailRepository shiftDetailRepository,
-            WeeklyHoursRepository weeklyHoursRepository
+            GeneralConfigurationService generalConfigurationService
     ) {
         int currentShiftHours = calculateShiftHours(shiftDetail.getStartTime(), shiftDetail.getEndTime());
-        int exactWeeklyHours = getExactWeeklyHoursFromConfig(weeklyHoursRepository);
+        int exactWeeklyHours = getExactWeeklyHoursFromConfig(generalConfigurationService);
         int totalScheduled = getTotalScheduledHoursForShift(shiftDetail, shiftDetailRepository);
         int totalWithNew = totalScheduled + currentShiftHours;
 
@@ -151,24 +164,35 @@ public class ShiftDetailValidator {
         return (int) calculateShiftDuration(startTime, endTime);
     }
 
-    public static int getExactWeeklyHoursFromConfig(WeeklyHoursRepository weeklyHoursRepository) {
-        List<WeeklyHours> weeklyHoursList = weeklyHoursRepository.findAll();
-        if (weeklyHoursList.isEmpty()) {
-            throw new IllegalStateException("No se encontró configuración de horas semanales. Debe configurar las horas exactas requeridas.");
-        }
-        WeeklyHours config = weeklyHoursList.get(0);
-        String hoursStr = config.getHours();
-        if (hoursStr == null || !hoursStr.contains(":")) {
-            throw new IllegalStateException("Formato de horas semanales inválido: " + hoursStr + ". Debe ser formato HH:mm");
-        }
+    // ✅ ACTUALIZADO: Obtener horas semanales desde GeneralConfiguration
+    public static int getExactWeeklyHoursFromConfig(GeneralConfigurationService configService) {
         try {
-            int exactHours = Integer.parseInt(hoursStr.split(":")[0]);
-            if (exactHours <= 0) {
-                throw new IllegalStateException("Las horas semanales deben ser mayor a 0");
+            String hoursStr = configService.getByType("WEEKLY_HOURS").getValue();
+
+            if (hoursStr == null) {
+                throw new IllegalStateException("No se encontró configuración de horas semanales.");
             }
-            return exactHours;
-        } catch (NumberFormatException e) {
-            throw new IllegalStateException("No se pudo parsear las horas semanales: " + hoursStr);
+
+            // Parsear diferentes formatos
+            if (hoursStr.contains(":")) {
+                // Formato "HH:mm" como "44:00"
+                String[] parts = hoursStr.split(":");
+                int exactHours = Integer.parseInt(parts[0]);
+                if (exactHours <= 0) {
+                    throw new IllegalStateException("Las horas semanales deben ser mayor a 0");
+                }
+                return exactHours;
+            } else {
+                // Formato decimal como "44" o "44.0"
+                double hoursDecimal = Double.parseDouble(hoursStr);
+                int exactHours = (int) Math.floor(hoursDecimal);
+                if (exactHours <= 0) {
+                    throw new IllegalStateException("Las horas semanales deben ser mayor a 0");
+                }
+                return exactHours;
+            }
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("No se encontró configuración de horas semanales. Debe configurar WEEKLY_HOURS.");
         }
     }
 
@@ -188,15 +212,17 @@ public class ShiftDetailValidator {
     // --- BREAK VALIDATIONS ---
     public static void validateBreakTimes(
             ShiftDetail shiftDetail,
-            BreakConfigurationService breakConfigurationService,
+            GeneralConfigurationService generalConfigurationService, // ✅ Cambiado
             ShiftDetailRepository shiftDetailRepository
     ) {
         // No breaks? salta
         if (shiftDetail.getBreakStartTime() == null && shiftDetail.getBreakEndTime() == null) return;
+
         // Si se proporciona uno, ambos deben estar presentes
         if (shiftDetail.getBreakStartTime() == null || shiftDetail.getBreakEndTime() == null) {
             throw new IllegalArgumentException("Si se define un break, tanto la hora de inicio como la de fin son obligatorias.");
         }
+
         // Formato
         if (!isValidMilitaryTime(shiftDetail.getBreakStartTime())) {
             throw new IllegalArgumentException("La hora de inicio del break debe estar en formato HH:mm (hora militar).");
@@ -223,11 +249,40 @@ public class ShiftDetailValidator {
         if (breakMinutes <= 0) {
             throw new IllegalArgumentException("La duración del break debe ser mayor a 0 minutos.");
         }
-        // Duración y total por día
-        Integer maxBreakMinutes = breakConfigurationService.getCurrentBreakMinutes();
+
+        // ✅ ACTUALIZADO: Obtener límite de break desde GeneralConfiguration
+        Integer maxBreakMinutes = getCurrentBreakMinutes(generalConfigurationService);
         validateTotalShiftBreaks(shiftDetail, breakMinutes, maxBreakMinutes, shiftDetailRepository);
+
         // El break debe estar dentro del horario laboral
         validateBreakWithinWorkingHours(shiftDetail);
+    }
+
+    // ✅ NUEVO: Obtener minutos de break desde GeneralConfiguration
+    private static Integer getCurrentBreakMinutes(GeneralConfigurationService configService) {
+        try {
+            String breakValue = configService.getByType("BREAK").getValue();
+
+            if (breakValue.matches("^\\d+$")) {
+                // Caso "30"
+                return Integer.parseInt(breakValue);
+            } else if (breakValue.toLowerCase().contains("minute")) {
+                // Caso "30 minutes"
+                return Integer.parseInt(breakValue.replaceAll("[^0-9]", ""));
+            } else if (breakValue.matches("^\\d+:\\d+$")) {
+                // Caso "00:30"
+                String[] parts = breakValue.split(":");
+                int hours = Integer.parseInt(parts[0]);
+                int minutes = Integer.parseInt(parts[1]);
+                return hours * 60 + minutes;
+            } else {
+                // Fallback por defecto
+                return 60; // 60 minutos por defecto
+            }
+        } catch (IllegalArgumentException e) {
+            // Si no hay configuración BREAK, usar fallback
+            return 60; // 60 minutos por defecto
+        }
     }
 
     // Duración del break
@@ -252,9 +307,11 @@ public class ShiftDetailValidator {
             }
             return;
         }
+
         List<ShiftDetail> details = shiftDetailRepository.findByShiftId(current.getShift().getId());
         int totalExistingBreakMinutesForDay = 0;
         Integer dayOfWeek = current.getDayOfWeek();
+
         for (ShiftDetail detail : details) {
             if (!detail.getDayOfWeek().equals(dayOfWeek)) continue;
             if (current.getId() != null && current.getId().equals(detail.getId())) continue;
@@ -262,6 +319,7 @@ public class ShiftDetailValidator {
                 totalExistingBreakMinutesForDay += calculateBreakMinutes(detail.getBreakStartTime(), detail.getBreakEndTime());
             }
         }
+
         int totalWithNewBreakForDay = totalExistingBreakMinutesForDay + currentBreakMinutes;
         if (totalWithNewBreakForDay > maxTotalBreakMinutes) {
             throw new IllegalArgumentException(
