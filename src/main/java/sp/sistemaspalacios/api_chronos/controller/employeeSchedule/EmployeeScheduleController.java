@@ -1,30 +1,22 @@
 package sp.sistemaspalacios.api_chronos.controller.employeeSchedule;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
-import sp.sistemaspalacios.api_chronos.dto.TimeBlockDTO;
-import sp.sistemaspalacios.api_chronos.dto.TimeBlockDependencyDTO;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
-import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
-import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleTimeBlock;
-import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
-import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.EmployeeScheduleService;
 
-import java.sql.Time;
-import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.*;
-import java.util.stream.Collectors;
 
 @RestController
-
 @RequestMapping("/api/employee-schedules")
 public class EmployeeScheduleController {
 
@@ -34,14 +26,105 @@ public class EmployeeScheduleController {
         this.employeeScheduleService = employeeScheduleService;
     }
 
-    /** 🔹 Obtiene todos los horarios de empleados */
+    /**
+     * =================== ENDPOINT PRINCIPAL ===================
+     * Asignar múltiples turnos con validación automática de conflictos
+     */
+    @PostMapping("/assign-multiple")
+    public ResponseEntity<?> assignMultipleSchedules(@RequestBody AssignmentRequest request) {
+        try {
+            // El servicio maneja TODA la lógica
+            AssignmentResult result = employeeScheduleService.processMultipleAssignments(request);
+
+            return ResponseEntity.ok(result);
+
+        } catch (ConflictException e) {
+            // Conflictos de solapamiento
+            return ResponseEntity.status(409).body(Map.of(
+                    "error", "SCHEDULE_CONFLICT",
+                    "message", e.getMessage(),
+                    "conflicts", e.getConflicts()
+            ));
+
+        } catch (ValidationException e) {
+            // Errores de validación
+            return ResponseEntity.badRequest().body(Map.of(
+                    "error", "VALIDATION_ERROR",
+                    "message", e.getMessage(),
+                    "details", e.getValidationErrors()
+            ));
+
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(Map.of(
+                    "error", "INTERNAL_ERROR",
+                    "message", "Error interno del servidor: " + e.getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Obtener resumen de horas por empleado
+     */
+    @GetMapping("/employee/{employeeId}/hours-summary")
+    public ResponseEntity<EmployeeHoursSummary> getEmployeeHoursSummary(@PathVariable Long employeeId) {
+        try {
+            EmployeeHoursSummary summary = employeeScheduleService.calculateEmployeeHoursSummary(employeeId);
+            return ResponseEntity.ok(summary);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).build();
+        }
+    }
+
+    /**
+     * Validar asignación SIN guardar (para preview)
+     */
+    @PostMapping("/validate-assignment")
+    public ResponseEntity<?> validateAssignment(@RequestBody AssignmentRequest request) {
+        try {
+            ValidationResult result = employeeScheduleService.validateAssignmentOnly(request);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Confirmar asignación de festivos con motivo opcional
+     */
+    @PostMapping(
+            value = "/confirm-holiday-assignment",
+            consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<?> confirmHolidayAssignment(@RequestBody HolidayConfirmationRequest request) {
+        try {
+            // validación mínima
+            if (request == null || request.getConfirmedAssignments() == null || request.getConfirmedAssignments().isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "error", "confirmedAssignments es requerido y no debe ser vacío"
+                ));
+            }
+
+            AssignmentResult result = employeeScheduleService.processHolidayAssignment(request);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            e.printStackTrace(); // para ver el stack en la consola
+            return ResponseEntity.status(500).body(Map.of(
+                    "success", false,
+                    "error", e.getMessage()
+            ));
+        }
+    }
+
+    // =================== ENDPOINTS EXISTENTES (mantener compatibilidad) ===================
+
     @GetMapping
     public ResponseEntity<List<EmployeeScheduleDTO>> getAllSchedules() {
         List<EmployeeScheduleDTO> schedules = employeeScheduleService.getAllEmployeeSchedules();
         return ResponseEntity.ok(schedules);
     }
 
-    /** 🔹 Obtiene un horario por su ID */
     @GetMapping("/{id}")
     public ResponseEntity<EmployeeScheduleDTO> getScheduleById(@PathVariable Long id) {
         if (id == null || id <= 0) {
@@ -51,7 +134,6 @@ public class EmployeeScheduleController {
         return ResponseEntity.ok(schedule);
     }
 
-    /** 🔹 Obtiene los horarios de un empleado por su ID */
     @GetMapping("/employee/{employeeId}")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByEmployeeId(@PathVariable Long employeeId) {
         if (employeeId == null || employeeId <= 0) {
@@ -61,290 +143,23 @@ public class EmployeeScheduleController {
         return ResponseEntity.ok(schedules);
     }
 
-    /** 🔹 Obtiene los horarios según el turno (Shift ID) */
-    @GetMapping("/shift/{shiftId}")
-    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByShiftId(@PathVariable Long shiftId) {
-        if (shiftId == null || shiftId <= 0) {
+    @GetMapping("/by-dependency-id")
+    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDependencyId(
+            @RequestParam Long dependencyId,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime,
+            @RequestParam(required = false) Long shiftId) {
+
+        try {
+            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(
+                    dependencyId, startDate, endDate, startTime, shiftId);
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
         }
-        List<EmployeeScheduleDTO> schedules = employeeScheduleService.getSchedulesByShiftId(shiftId);
-        return ResponseEntity.ok(schedules);
     }
 
-    /** 🔹 Crea un nuevo horario de empleado */
-    @PostMapping
-    public ResponseEntity<?> createSchedules(@RequestBody List<Map<String, Object>> scheduleRequests) {
-        try {
-            // Convertir las solicitudes a objetos EmployeeSchedule
-            List<EmployeeSchedule> schedules = scheduleRequests.stream()
-                    .map(this::parseIndividualRequest)
-                    .collect(Collectors.toList());
-
-            // Crear los horarios
-            List<EmployeeSchedule> createdSchedules = employeeScheduleService.createMultipleSchedules(schedules);
-
-            // Convertir a formato de respuesta
-            List<Map<String, Object>> responses = createdSchedules.stream()
-                    .map(this::createSingleScheduleResponse)
-                    .collect(Collectors.toList());
-
-            return ResponseEntity.ok(responses);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-    }
-
-    private Map<String, Object> createSingleScheduleResponse(EmployeeSchedule created) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("id", created.getId());
-        response.put("employeeId", created.getEmployeeId());
-        response.put("shift", convertShiftToMap(created.getShift()));
-        response.put("startDate", created.getStartDate());
-        response.put("endDate", created.getEndDate());
-        response.put("createdAt", created.getCreatedAt());
-        response.put("updatedAt", created.getUpdatedAt());
-        response.put("daysParentId", created.getDaysParentId());
-
-        Map<String, Object> daysStructure = new LinkedHashMap<>();
-        daysStructure.put("id", created.getDaysParentId());
-        daysStructure.put("items", created.getDays().stream()
-                .map(this::convertDayToMap)
-                .collect(Collectors.toList()));
-
-        response.put("days", daysStructure);
-        return response;
-    }
-    private EmployeeSchedule parseIndividualRequest(Map<String, Object> scheduleRequest) {
-        EmployeeSchedule schedule = new EmployeeSchedule();
-
-        // Extract employeeId
-        Object employeeIdObj = scheduleRequest.get("employeeId");
-        if (employeeIdObj == null) {
-            throw new IllegalArgumentException("Employee ID is required");
-        }
-        schedule.setEmployeeId(Long.parseLong(employeeIdObj.toString()));
-
-        // Extract shift
-        Object shiftObj = scheduleRequest.get("shift");
-        if (shiftObj == null) {
-            throw new IllegalArgumentException("Shift is required");
-        }
-
-        Map<String, Object> shiftMap = (Map<String, Object>) shiftObj;
-        Shifts shift = new Shifts();
-        shift.setId(Long.parseLong(shiftMap.get("id").toString()));
-        schedule.setShift(shift);
-
-        // Extract dates
-        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
-        try {
-            schedule.setStartDate(dateFormat.parse(scheduleRequest.get("startDate").toString()));
-            schedule.setEndDate(dateFormat.parse(scheduleRequest.get("endDate").toString()));
-        } catch (ParseException e) {
-            throw new IllegalArgumentException("Invalid date format. Use yyyy-MM-dd");
-        }
-
-        return schedule;
-    }
-    private Map<String, Object> createSingleSchedule(EmployeeSchedule schedule) {
-        EmployeeSchedule created = employeeScheduleService.createEmployeeSchedule(schedule);
-
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("id", created.getId());
-        response.put("employeeId", created.getEmployeeId());
-
-        // Convertir shift a mapa
-        response.put("shift", convertShiftToMap(created.getShift()));
-
-        response.put("startDate", created.getStartDate());
-        response.put("endDate", created.getEndDate());
-        response.put("createdAt", created.getCreatedAt());
-        response.put("updatedAt", created.getUpdatedAt());
-
-        // Estructura days con ID (usando el ID del horario padre)
-        Map<String, Object> daysStructure = new LinkedHashMap<>();
-        daysStructure.put("id", created.getId()); // Usamos el ID del horario como ID de days
-
-        daysStructure.put("items", created.getDays().stream()
-                .map(this::convertDayToMap)
-                .collect(Collectors.toList()));
-
-        response.put("days", daysStructure);
-        return response;
-    }
-
-    private Map<String, Object> convertShiftToMap(Shifts shift) {
-        if (shift == null) return null;
-
-        Map<String, Object> shiftMap = new LinkedHashMap<>();
-        shiftMap.put("id", shift.getId());
-        shiftMap.put("name", shift.getName());
-        shiftMap.put("description", shift.getDescription());
-        shiftMap.put("timeBreak", shift.getTimeBreak());
-        shiftMap.put("dependencyId", shift.getDependencyId());
-        shiftMap.put("createdAt", shift.getCreatedAt());
-        shiftMap.put("updatedAt", shift.getUpdatedAt());
-
-        if (shift.getShiftDetails() != null) {
-            shiftMap.put("shiftDetails", shift.getShiftDetails().stream()
-                    .map(this::convertShiftDetailToMap)
-                    .collect(Collectors.toList()));
-        }
-
-        return shiftMap;
-    }
-
-    private Map<String, Object> convertShiftDetailToMap(ShiftDetail detail) {
-        Map<String, Object> detailMap = new LinkedHashMap<>();
-        detailMap.put("id", detail.getId());
-        detailMap.put("dayOfWeek", detail.getDayOfWeek());
-        detailMap.put("startTime", detail.getStartTime());
-        detailMap.put("endTime", detail.getEndTime());
-        detailMap.put("createdAt", detail.getCreatedAt());
-        detailMap.put("updatedAt", detail.getUpdatedAt());
-        return detailMap;
-    }
-
-    private Map<String, Object> convertDayToMap(EmployeeScheduleDay day) {
-        Map<String, Object> dayMap = new LinkedHashMap<>();
-        dayMap.put("id", day.getId()); // Use the actual day ID, not the schedule ID
-        dayMap.put("date", day.getDate());
-        dayMap.put("dayOfWeek", day.getDayOfWeek());
-
-        // Convertir timeBlocks
-        List<Map<String, String>> timeBlocks = day.getTimeBlocks().stream()
-                .map(this::convertTimeBlockToMap)
-                .collect(Collectors.toList());
-
-        dayMap.put("timeBlocks", timeBlocks);
-        return dayMap;
-    }
-
-
-
-
-
-    @PutMapping("/time-blocks")
-    public ResponseEntity<?> updateTimeBlock(@RequestBody TimeBlockDTO timeBlockDTO) {
-        try {
-            // Validate basic input
-            validateTimeBlockInput(timeBlockDTO);
-
-            // Update time block
-            EmployeeScheduleTimeBlock updatedBlock = employeeScheduleService.updateTimeBlock(timeBlockDTO);
-
-            // Create structured response
-            Map<String, Object> response = createTimeBlockResponse(updatedBlock);
-
-            return ResponseEntity.ok(response);
-
-        } catch (ResourceNotFoundException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-    }
-
-    private void validateTimeBlockInput(TimeBlockDTO timeBlockDTO) {
-        if (timeBlockDTO.getId() == null || timeBlockDTO.getId() <= 0) {
-            throw new IllegalArgumentException("Invalid time block ID");
-        }
-        if (timeBlockDTO.getEmployeeScheduleDayId() == null || timeBlockDTO.getEmployeeScheduleDayId() <= 0) {
-            throw new IllegalArgumentException("Invalid employee schedule day ID");
-        }
-        if (timeBlockDTO.getNumberId() == null || timeBlockDTO.getNumberId().isEmpty()) {
-            throw new IllegalArgumentException("Invalid employee identification number");
-        }
-    }
-
-    private Map<String, Object> createTimeBlockResponse(EmployeeScheduleTimeBlock updatedBlock) {
-        Map<String, Object> response = new LinkedHashMap<>();
-        response.put("id", updatedBlock.getId());
-        response.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
-        response.put("startTime", updatedBlock.getStartTime() != null ? updatedBlock.getStartTime().toString() : null);
-        response.put("endTime", updatedBlock.getEndTime() != null ? updatedBlock.getEndTime().toString() : null);
-        response.put("numberId", updatedBlock.getEmployeeScheduleDay().getEmployeeSchedule().getEmployeeId().toString());
-        response.put("updatedAt", updatedBlock.getUpdatedAt());
-
-        return response;
-    }
-
-
-    @PutMapping("/time-blocks/by-dependency")
-    public ResponseEntity<?> updateTimeBlocksByDependency(@RequestBody List<TimeBlockDependencyDTO> timeBlockDTOList) {
-        try {
-            // Validaciones generales (si son necesarias)
-            if (timeBlockDTOList == null || timeBlockDTOList.isEmpty()) {
-                return ResponseEntity.badRequest().body("No se proporcionaron bloques de tiempo.");
-            }
-
-            // Lista para almacenar las respuestas de los bloques de tiempo actualizados
-            List<Map<String, Object>> updatedBlocks = new ArrayList<>();
-
-            // Iterar sobre la lista de bloques de tiempo y actualizarlos
-            for (TimeBlockDependencyDTO timeBlockDTO : timeBlockDTOList) {
-                // Validar cada bloque de tiempo individualmente (puedes reutilizar la lógica de validación existente)
-                if (timeBlockDTO.getId() == null || timeBlockDTO.getId() <= 0) {
-                    return ResponseEntity.badRequest().body("ID del bloque de tiempo inválido.");
-                }
-                if (timeBlockDTO.getEmployeeScheduleDayId() == null || timeBlockDTO.getEmployeeScheduleDayId() <= 0) {
-                    return ResponseEntity.badRequest().body("ID del día asociado inválido.");
-                }
-
-
-                // Actualizar el bloque de tiempo
-                EmployeeScheduleTimeBlock updatedBlock = employeeScheduleService.updateTimeBlockByDependency(timeBlockDTO);
-
-                // Crear respuesta con la estructura solicitada para cada bloque actualizado
-                Map<String, Object> blockResponse = new LinkedHashMap<>();
-                blockResponse.put("id", updatedBlock.getId());
-                blockResponse.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
-                blockResponse.put("startTime", updatedBlock.getStartTime().toString());
-                blockResponse.put("endTime", updatedBlock.getEndTime().toString());
-
-                updatedBlocks.add(blockResponse);
-            }
-
-            // Responder con todos los bloques actualizados
-            return ResponseEntity.ok(updatedBlocks);
-
-        } catch (ResourceNotFoundException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-    }
-
-
-
-    private Map<String, String> convertTimeBlockToMap(EmployeeScheduleTimeBlock block) {
-        Map<String, String> blockMap = new HashMap<>();
-        blockMap.put("startTime", block.getStartTime().toString());
-        blockMap.put("endTime", block.getEndTime().toString());
-        return blockMap;
-    }
-
-
-
-
-    /** 🔹 Actualiza un horario de empleado */
-    @PutMapping("/{id}")
-    public ResponseEntity<?> updateSchedule(@PathVariable Long id, @RequestBody EmployeeSchedule schedule) {
-        if (id == null || id <= 0) {
-            return ResponseEntity.badRequest().body("ID inválido");
-        }
-        try {
-            EmployeeSchedule updated = employeeScheduleService.updateEmployeeSchedule(id, schedule);
-            return ResponseEntity.ok(updated);
-        } catch (ResourceNotFoundException e) {
-            return ResponseEntity.notFound().build();
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        }
-    }
-
-    /** 🔹 Elimina un horario de empleado */
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteSchedule(@PathVariable Long id) {
         if (id == null || id <= 0) {
@@ -358,68 +173,206 @@ public class EmployeeScheduleController {
         }
     }
 
-    /** 🔹 Manejo de excepciones para `ResourceNotFoundException` */
-    @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<String> handleResourceNotFoundException(ResourceNotFoundException ex) {
-        return ResponseEntity.status(404).body(ex.getMessage());
+    // =================== DTOs ===================
+
+    public static class AssignmentRequest {
+        private List<ScheduleAssignment> assignments;
+
+        public List<ScheduleAssignment> getAssignments() { return assignments; }
+        public void setAssignments(List<ScheduleAssignment> assignments) { this.assignments = assignments; }
     }
 
-    /** 🔹 Manejo de excepciones para `IllegalArgumentException` */
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<String> handleIllegalArgumentException(IllegalArgumentException ex) {
-        return ResponseEntity.badRequest().body(ex.getMessage());
+    public static class ScheduleAssignment {
+        private Long employeeId;
+        private Long shiftId;
+        private LocalDate startDate;
+        private LocalDate endDate;
+
+        // Getters y Setters
+        public Long getEmployeeId() { return employeeId; }
+        public void setEmployeeId(Long employeeId) { this.employeeId = employeeId; }
+        public Long getShiftId() { return shiftId; }
+        public void setShiftId(Long shiftId) { this.shiftId = shiftId; }
+        public LocalDate getStartDate() { return startDate; }
+        public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
+        public LocalDate getEndDate() { return endDate; }
+        public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
     }
 
-    @GetMapping("/by-employee-ids")
-    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByEmployeeIds(
-            @RequestParam List<Long> employeeIds) {
+    public static class AssignmentResult {
+        private boolean success;
+        private String message;
+        private List<EmployeeHoursSummary> updatedEmployees;
+        private List<HolidayWarning> holidayWarnings;
+        private boolean requiresConfirmation;
 
-        try {
-            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByEmployeeIds(employeeIds);
-            return ResponseEntity.ok(result);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().build();
+        // Getters y Setters
+        public boolean isSuccess() { return success; }
+        public void setSuccess(boolean success) { this.success = success; }
+        public String getMessage() { return message; }
+        public void setMessage(String message) { this.message = message; }
+        public List<EmployeeHoursSummary> getUpdatedEmployees() { return updatedEmployees; }
+        public void setUpdatedEmployees(List<EmployeeHoursSummary> updatedEmployees) { this.updatedEmployees = updatedEmployees; }
+        public List<HolidayWarning> getHolidayWarnings() { return holidayWarnings; }
+        public void setHolidayWarnings(List<HolidayWarning> holidayWarnings) { this.holidayWarnings = holidayWarnings; }
+        public boolean isRequiresConfirmation() { return requiresConfirmation; }
+        public void setRequiresConfirmation(boolean requiresConfirmation) { this.requiresConfirmation = requiresConfirmation; }
+    }
+
+    public static class EmployeeHoursSummary {
+        private Long employeeId;
+        private Double totalHours;
+        private Double assignedHours;        // horas regulares
+        private Double overtimeHours;        // horas extras (NO festivas)
+        private String overtimeType;         // tipo de recargo NO festivo
+        private Double festivoHours;         // NUEVO: horas festivas
+        private String festivoType;          // NUEVO: tipo de recargo festivo
+        private Map<String, Object> overtimeBreakdown;
+
+        // Constructores
+        public EmployeeHoursSummary() {}
+
+        // Getters y Setters
+        public Long getEmployeeId() { return employeeId; }
+        public void setEmployeeId(Long employeeId) { this.employeeId = employeeId; }
+
+        public Double getTotalHours() { return totalHours; }
+        public void setTotalHours(Double totalHours) { this.totalHours = totalHours; }
+
+        public Double getAssignedHours() { return assignedHours; }
+        public void setAssignedHours(Double assignedHours) { this.assignedHours = assignedHours; }
+
+        public Double getOvertimeHours() { return overtimeHours; }
+        public void setOvertimeHours(Double overtimeHours) { this.overtimeHours = overtimeHours; }
+
+        public String getOvertimeType() { return overtimeType; }
+        public void setOvertimeType(String overtimeType) { this.overtimeType = overtimeType; }
+
+        // NUEVOS CAMPOS
+        public Double getFestivoHours() { return festivoHours; }
+        public void setFestivoHours(Double festivoHours) { this.festivoHours = festivoHours; }
+
+        public String getFestivoType() { return festivoType; }
+        public void setFestivoType(String festivoType) { this.festivoType = festivoType; }
+
+        public Map<String, Object> getOvertimeBreakdown() { return overtimeBreakdown; }
+        public void setOvertimeBreakdown(Map<String, Object> overtimeBreakdown) { this.overtimeBreakdown = overtimeBreakdown; }
+    }
+    public static class HolidayWarning {
+        private LocalDate holidayDate;
+        private String holidayName;
+        private Long employeeId;
+        private boolean requiresConfirmation;
+
+        // Getters y Setters
+        public LocalDate getHolidayDate() { return holidayDate; }
+        public void setHolidayDate(LocalDate holidayDate) { this.holidayDate = holidayDate; }
+        public String getHolidayName() { return holidayName; }
+        public void setHolidayName(String holidayName) { this.holidayName = holidayName; }
+        public Long getEmployeeId() { return employeeId; }
+        public void setEmployeeId(Long employeeId) { this.employeeId = employeeId; }
+        public boolean isRequiresConfirmation() { return requiresConfirmation; }
+        public void setRequiresConfirmation(boolean requiresConfirmation) { this.requiresConfirmation = requiresConfirmation; }
+    }
+
+    public static class HolidayConfirmationRequest {
+        private List<ConfirmedAssignment> confirmedAssignments;
+        public List<ConfirmedAssignment> getConfirmedAssignments() { return confirmedAssignments; }
+        public void setConfirmedAssignments(List<ConfirmedAssignment> confirmedAssignments) { this.confirmedAssignments = confirmedAssignments; }
+    }
+
+    public static class ConfirmedAssignment {
+        private Long employeeId;
+        private Long shiftId;
+
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
+        private LocalDate startDate;
+
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
+        private LocalDate endDate; // puede venir null
+
+        private List<HolidayDecision> holidayDecisions;
+
+        // getters/setters
+        public Long getEmployeeId() { return employeeId; }
+        public void setEmployeeId(Long employeeId) { this.employeeId = employeeId; }
+        public Long getShiftId() { return shiftId; }
+        public void setShiftId(Long shiftId) { this.shiftId = shiftId; }
+        public LocalDate getStartDate() { return startDate; }
+        public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
+        public LocalDate getEndDate() { return endDate; }
+        public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
+        public List<HolidayDecision> getHolidayDecisions() { return holidayDecisions; }
+        public void setHolidayDecisions(List<HolidayDecision> holidayDecisions) { this.holidayDecisions = holidayDecisions; }
+    }
+    public static class HolidayDecision {
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
+        private LocalDate holidayDate;
+
+        private boolean applyHolidayCharge;
+        private String exemptionReason;
+
+        // getters/setters
+        public LocalDate getHolidayDate() { return holidayDate; }
+        public void setHolidayDate(LocalDate holidayDate) { this.holidayDate = holidayDate; }
+        public boolean isApplyHolidayCharge() { return applyHolidayCharge; }
+        public void setApplyHolidayCharge(boolean applyHolidayCharge) { this.applyHolidayCharge = applyHolidayCharge; }
+        public String getExemptionReason() { return exemptionReason; }
+        public void setExemptionReason(String exemptionReason) { this.exemptionReason = exemptionReason; }
+    }
+
+    public static class ValidationResult {
+        private boolean valid;
+        private List<String> errors;
+        private List<HolidayWarning> holidayWarnings;
+
+        // Getters y Setters
+        public boolean isValid() { return valid; }
+        public void setValid(boolean valid) { this.valid = valid; }
+        public List<String> getErrors() { return errors; }
+        public void setErrors(List<String> errors) { this.errors = errors; }
+        public List<HolidayWarning> getHolidayWarnings() { return holidayWarnings; }
+        public void setHolidayWarnings(List<HolidayWarning> holidayWarnings) { this.holidayWarnings = holidayWarnings; }
+    }
+
+    // =================== EXCEPCIONES ===================
+
+    public static class ConflictException extends RuntimeException {
+        private List<ScheduleConflict> conflicts;
+
+        public ConflictException(String message, List<ScheduleConflict> conflicts) {
+            super(message);
+            this.conflicts = conflicts;
         }
+
+        public List<ScheduleConflict> getConflicts() { return conflicts; }
     }
 
+    public static class ValidationException extends RuntimeException {
+        private List<String> validationErrors;
 
-
-    @GetMapping("/by-dependency-id")
-    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDependencyId(
-            @RequestParam Long dependencyId,
-            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
-            @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime,
-            @RequestParam(required = false) Long shiftId) {
-
-        try {
-            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(dependencyId, startDate, endDate, startTime, shiftId);
-            return ResponseEntity.ok(result);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().build();
+        public ValidationException(String message, List<String> validationErrors) {
+            super(message);
+            this.validationErrors = validationErrors;
         }
+
+        public List<String> getValidationErrors() { return validationErrors; }
     }
 
+    public static class ScheduleConflict {
+        private Long employeeId;
+        private LocalDate conflictDate;
+        private Long existingScheduleId;
+        private String message;
 
-
-
-
-
-
-
-
-
-
-
-
-    /** 🔹 Obtiene los horarios dentro de un rango de fechas */
-    @GetMapping("/by-date-range")
-    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDateRange(
-            @RequestParam("startDate") @DateTimeFormat(pattern = "yyyy-MM-dd") Date startDate,
-            @RequestParam(value = "endDate", required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") Date endDate) {
-
-        List<EmployeeScheduleDTO> schedules = employeeScheduleService.getSchedulesByDateRange(startDate, endDate);
-        return ResponseEntity.ok(schedules);
+        // Getters y Setters
+        public Long getEmployeeId() { return employeeId; }
+        public void setEmployeeId(Long employeeId) { this.employeeId = employeeId; }
+        public LocalDate getConflictDate() { return conflictDate; }
+        public void setConflictDate(LocalDate conflictDate) { this.conflictDate = conflictDate; }
+        public Long getExistingScheduleId() { return existingScheduleId; }
+        public void setExistingScheduleId(Long existingScheduleId) { this.existingScheduleId = existingScheduleId; }
+        public String getMessage() { return message; }
+        public void setMessage(String message) { this.message = message; }
     }
-
 }

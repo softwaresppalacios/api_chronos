@@ -1,0 +1,165 @@
+package sp.sistemaspalacios.api_chronos.controller.employeeSchedule;
+
+
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import sp.sistemaspalacios.api_chronos.service.employeeSchedule.ScheduleAssignmentGroupService;
+import sp.sistemaspalacios.api_chronos.dto.ScheduleAssignmentGroupDTO;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/schedule-groups")
+@RequiredArgsConstructor
+public class ScheduleAssignmentGroupController {
+
+    private final ScheduleAssignmentGroupService groupService;
+
+    /**
+     * 1. CREAR/AGRUPAR asignaciones
+     * POST /api/schedule-groups/assign
+     */
+    @PostMapping("/assign")
+    public ResponseEntity<?> assignSchedules(@RequestBody AssignmentRequest request) {
+        try {
+            // Validar request
+            if (request.getEmployeeId() == null || request.getScheduleIds() == null || request.getScheduleIds().isEmpty()) {
+                return ResponseEntity.badRequest().body(
+                        Map.of("error", "Debe proporcionar employeeId y al menos un scheduleId")
+                );
+            }
+
+            // Procesar asignación
+            ScheduleAssignmentGroupDTO result = groupService.processScheduleAssignment(
+                    request.getEmployeeId(),
+                    request.getScheduleIds()
+            );
+
+            // Respuesta exitosa
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", "Asignación procesada correctamente");
+            response.put("data", result);
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+        }
+    }
+
+    /**
+     * 2. OBTENER grupos de un empleado
+     * GET /api/schedule-groups/employee/{employeeId}
+     */
+    @GetMapping("/employee/{employeeId}")
+    public ResponseEntity<?> getEmployeeGroups(@PathVariable Long employeeId) {
+        try {
+            List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(employeeId);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("employeeId", employeeId);
+            response.put("totalGroups", groups.size());
+            response.put("groups", groups);
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * 3. OBTENER un grupo específico
+     * GET /api/schedule-groups/{groupId}
+     */
+    @GetMapping("/{groupId}")
+    public ResponseEntity<?> getGroupById(@PathVariable Long groupId) {
+        try {
+            ScheduleAssignmentGroupDTO group = groupService.getGroupById(groupId);
+
+            if (group == null) {
+                return ResponseEntity.notFound().build();
+            }
+
+            return ResponseEntity.ok(group);
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * 4. ELIMINAR un grupo (desagrupar)
+     * DELETE /api/schedule-groups/{groupId}
+     */
+    @DeleteMapping("/{groupId}")
+    public ResponseEntity<?> deleteGroup(@PathVariable Long groupId) {
+        try {
+            groupService.deleteGroup(groupId);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Grupo eliminado correctamente"
+            ));
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * 5. RECALCULAR horas de un grupo
+     * POST /api/schedule-groups/{groupId}/recalculate
+     */
+    @PostMapping("/{groupId}/recalculate")
+    public ResponseEntity<?> recalculateGroup(@PathVariable Long groupId) {
+        try {
+            ScheduleAssignmentGroupDTO result = groupService.recalculateGroup(groupId);
+
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "message", "Horas recalculadas correctamente",
+                    "data", result
+            ));
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * Clase interna para el request
+     */
+    public static class AssignmentRequest {
+        private Long employeeId;
+        private List<Long> scheduleIds;
+
+        // Getters y Setters
+        public Long getEmployeeId() {
+            return employeeId;
+        }
+
+        public void setEmployeeId(Long employeeId) {
+            this.employeeId = employeeId;
+        }
+
+        public List<Long> getScheduleIds() {
+            return scheduleIds;
+        }
+
+        public void setScheduleIds(List<Long> scheduleIds) {
+            this.scheduleIds = scheduleIds;
+        }
+    }
+}

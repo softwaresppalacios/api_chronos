@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.Data;
 
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
@@ -25,7 +26,7 @@ public class EmployeeScheduleDay {
     private EmployeeSchedule employeeSchedule;
 
     @OneToMany(mappedBy = "employeeScheduleDay", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    private List<EmployeeScheduleTimeBlock> timeBlocks;
+    private List<EmployeeScheduleTimeBlock> timeBlocks = new ArrayList<>();
 
     // Nuevo campo para days_parent_id
     @Column(name = "days_parent_id")
@@ -38,6 +39,19 @@ public class EmployeeScheduleDay {
     @Column(name = "updated_at")
     @Temporal(TemporalType.TIMESTAMP)
     private Date updatedAt;
+
+    //FIX: Constructor que inicializa la lista
+    public EmployeeScheduleDay() {
+        this.timeBlocks = new ArrayList<>();
+    }
+
+    // FIX: Getter que asegura lista mutable
+    public List<EmployeeScheduleTimeBlock> getTimeBlocks() {
+        if (timeBlocks == null) {
+            timeBlocks = new ArrayList<>();
+        }
+        return timeBlocks;
+    }
 
     public ZoneId getDaysParent() {
         return null;

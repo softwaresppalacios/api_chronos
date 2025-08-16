@@ -37,8 +37,6 @@ public class EmployeeSchedule {
     @Column(name = "days_parent_id")
     private Long daysParentId;
 
-
-
     @Column(name = "created_at", nullable = false, updatable = false)
     @Temporal(TemporalType.TIMESTAMP)
     private Date createdAt;
@@ -47,9 +45,20 @@ public class EmployeeSchedule {
     @Temporal(TemporalType.TIMESTAMP)
     private Date updatedAt;
 
+    //  FIX: Constructor que inicializa la lista
+    public EmployeeSchedule() {
+        this.days = new ArrayList<>();
+    }
+
+    // FIX: Getter que asegura lista mutable
+    public List<EmployeeScheduleDay> getDays() {
+        if (days == null) {
+            days = new ArrayList<>();
+        }
+        return days;
+    }
+
     public EmployeeScheduleDTO getEmployee() {
         return null;
     }
-
-
 }

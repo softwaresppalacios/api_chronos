@@ -22,10 +22,7 @@ public class EmployeeScheduleDTO {
     private Map<String, Object> days;  // Asegúrate que este campo existe
 
     // Constructor completo
-    public EmployeeScheduleDTO(Long id, Long numberId, String firstName, String secondName,
-                               String surName, String secondSurname, String dependency,
-                               String position, String startDate, String endDate,
-                               ShiftsDTO shift, Long daysParentId, Map<String, Object> days) {
+    public EmployeeScheduleDTO() {
         this.id = id;
         this.numberId = numberId;
         this.firstName = firstName;

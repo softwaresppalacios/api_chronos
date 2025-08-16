@@ -32,6 +32,7 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
 
 
+
     // Consulta para verificar existencia
     @Query("SELECT CASE WHEN COUNT(es) > 0 THEN true ELSE false END " +
             "FROM EmployeeSchedule es " +
