@@ -18,6 +18,7 @@ public class EmployeeScheduleDTO {
     private String startDate;
     private String endDate;
     private ShiftsDTO shift;
+    private String shiftName;  // 🆕 NUEVO CAMPO AGREGADO
     private Long daysParentId;  // Asegúrate que este campo existe
     private Map<String, Object> days;  // Asegúrate que este campo existe
 
@@ -34,15 +35,13 @@ public class EmployeeScheduleDTO {
         this.startDate = startDate;
         this.endDate = endDate;
         this.shift = shift;
+        this.shiftName = shiftName;  // 🆕 AGREGADO AL CONSTRUCTOR
         this.daysParentId = daysParentId;
         this.days = days;
     }
 
-
-
     public EmployeeScheduleDTO(Long id, Long id1, Object name, Long id2, String name1, String string, String string1, Long daysParentId, Map<String, Object> daysStructure) {
     }
-
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -77,6 +76,9 @@ public class EmployeeScheduleDTO {
     public ShiftsDTO getShift() { return shift; }
     public void setShift(ShiftsDTO shift) { this.shift = shift; }
 
+    // 🆕 NUEVOS GETTERS Y SETTERS PARA SHIFTNAME
+    public String getShiftName() { return shiftName; }
+    public void setShiftName(String shiftName) { this.shiftName = shiftName; }
 
     public Object getName() {
         return null;

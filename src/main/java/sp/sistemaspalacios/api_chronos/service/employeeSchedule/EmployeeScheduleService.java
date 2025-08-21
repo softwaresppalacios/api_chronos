@@ -109,7 +109,7 @@ public class EmployeeScheduleService {
             throw new ConflictException("Conflictos de horarios detectados", conflicts);
         }
 
-        // 2) Festivos (para confirmar)
+        // 2) Festivos
         List<HolidayWarning> holidayWarnings = detectHolidayWarnings(request.getAssignments());
         if (!holidayWarnings.isEmpty()) {
             AssignmentResult preview = new AssignmentResult();
@@ -128,24 +128,77 @@ public class EmployeeScheduleService {
             EmployeeSchedule saved = employeeScheduleRepository.save(schedule);
             generateScheduleDays(saved);
             created.add(employeeScheduleRepository.save(saved));
+
+            // 🔥 DEBUG: Verificar que se guardó correctamente
+            System.out.println("✅ Schedule creado: ID=" + saved.getId() +
+                    ", EmployeeId=" + saved.getEmployeeId() +
+                    ", ShiftId=" + saved.getShift().getId());
         }
 
-        // 4) AGRUPAR por empleado y CREAR/ACTUALIZAR grupo (¡¡aquí se guarda en schedule_assignment_group!!)
+        // 🔥 IMPORTANTE: Forzar flush antes de agrupar
+        employeeScheduleRepository.flush();
+        System.out.println("🔄 Flush ejecutado - " + created.size() + " schedules confirmados en BD");
+
+        // 4) AGRUPAR por empleado y CREAR/ACTUALIZAR grupo
         Map<Long, List<Long>> idsPorEmpleado = created.stream()
                 .collect(Collectors.groupingBy(EmployeeSchedule::getEmployeeId,
                         Collectors.mapping(EmployeeSchedule::getId, Collectors.toList())));
 
+        System.out.println("📊 Agrupación por empleado:");
+        idsPorEmpleado.forEach((empId, scheduleIds) -> {
+            System.out.println("  Employee " + empId + ": schedules " + scheduleIds);
+        });
+
         for (Map.Entry<Long, List<Long>> e : idsPorEmpleado.entrySet()) {
             Long employeeId = e.getKey();
             List<Long> scheduleIds = e.getValue();
-            // Esto persiste/actualiza el grupo aplicando la REGLA: horas correctas por semana
-            groupService.processScheduleAssignment(employeeId, scheduleIds);
+
+            try {
+                // 🔥 VERIFICAR que los schedules existen antes de agrupar
+                List<EmployeeSchedule> verification = employeeScheduleRepository.findAllById(scheduleIds);
+                System.out.println("🔍 Verificación pre-grupo - Employee " + employeeId +
+                        ": " + verification.size() + " schedules encontrados de " + scheduleIds.size());
+
+                if (verification.size() != scheduleIds.size()) {
+                    System.err.println("❌ PROBLEMA: No todos los schedules existen en BD para employee " + employeeId);
+                    scheduleIds.forEach(id -> {
+                        boolean exists = verification.stream().anyMatch(s -> s.getId().equals(id));
+                        System.err.println("    Schedule " + id + ": " + (exists ? "✅ existe" : "❌ NO EXISTE"));
+                    });
+                }
+
+                // Procesar agrupación
+                ScheduleAssignmentGroupDTO group = groupService.processScheduleAssignment(employeeId, scheduleIds);
+                System.out.println("✅ Grupo procesado para employee " + employeeId +
+                        ": group ID " + group.getId());
+
+            } catch (Exception ex) {
+                System.err.println("❌ Error agrupando employee " + employeeId + ": " + ex.getMessage());
+                ex.printStackTrace();
+            }
         }
 
-        // 5) Resumen de horas por empleado basado en el grupo más reciente
+        // 5) Resumen final
         List<sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.EmployeeHoursSummary> summaries =
                 idsPorEmpleado.keySet().stream()
-                        .map(this::calculateEmployeeHoursSummary)
+                        .map(empId -> {
+                            try {
+                                return calculateEmployeeHoursSummary(empId);
+                            } catch (Exception ex) {
+                                System.err.println("❌ Error calculando resumen para employee " + empId + ": " + ex.getMessage());
+                                // Retornar resumen vacío en caso de error
+                                var empty = new sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.EmployeeHoursSummary();
+                                empty.setEmployeeId(empId);
+                                empty.setTotalHours(0.0);
+                                empty.setAssignedHours(0.0);
+                                empty.setOvertimeHours(0.0);
+                                empty.setOvertimeType("Normal");
+                                empty.setFestivoHours(0.0);
+                                empty.setFestivoType(null);
+                                empty.setOvertimeBreakdown(new HashMap<>());
+                                return empty;
+                            }
+                        })
                         .collect(Collectors.toList());
 
         AssignmentResult result = new AssignmentResult();
@@ -156,7 +209,6 @@ public class EmployeeScheduleService {
 
         return result;
     }
-
     // =================== CONFIRMAR FESTIVOS ===================
 
     @Transactional
@@ -401,18 +453,38 @@ public class EmployeeScheduleService {
         Map<Long, List<ScheduleAssignment>> byEmp = assignments.stream()
                 .collect(Collectors.groupingBy(ScheduleAssignment::getEmployeeId));
 
+        System.out.println("🔍 VERIFICANDO CONFLICTOS PARA " + byEmp.size() + " EMPLEADOS:");
+
         for (Map.Entry<Long, List<ScheduleAssignment>> entry : byEmp.entrySet()) {
             Long employeeId = entry.getKey();
             List<ScheduleAssignment> empAssignments = entry.getValue();
 
+            System.out.println("\n👤 Empleado: " + employeeId);
+            System.out.println("  📋 Nuevas asignaciones: " + empAssignments.size());
+
             List<EmployeeSchedule> existing = employeeScheduleRepository.findByEmployeeId(employeeId);
+            System.out.println("  📚 Turnos existentes: " + existing.size());
+
+            if (!existing.isEmpty()) {
+                existing.forEach(es -> {
+                    System.out.println("    - ID: " + es.getId() +
+                            ", Fechas: " + es.getStartDate() + " al " + es.getEndDate() +
+                            ", Turno: " + (es.getShift() != null ? es.getShift().getName() : "null"));
+                });
+            }
 
             // 1) VALIDAR: nuevos vs existentes
             for (ScheduleAssignment newAssignment : empAssignments) {
+                System.out.println("  🆕 Verificando nueva asignación: " +
+                        newAssignment.getStartDate() + " al " + newAssignment.getEndDate());
+
                 for (EmployeeSchedule existingSchedule : existing) {
                     ScheduleConflict conflict = checkForConflict(newAssignment, existingSchedule);
                     if (conflict != null) {
-
+                        System.out.println("    ❌ CONFLICTO ENCONTRADO: " + conflict.getMessage());
+                        conflicts.add(conflict);
+                    } else {
+                        System.out.println("    ✅ Sin conflicto con turno existente ID: " + existingSchedule.getId());
                     }
                 }
             }
@@ -420,23 +492,31 @@ public class EmployeeScheduleService {
             // 2) VALIDAR: nuevos entre sí (si asignan múltiples turnos al mismo empleado)
             for (int i = 0; i < empAssignments.size(); i++) {
                 for (int j = i + 1; j < empAssignments.size(); j++) {
+                    System.out.println("  🔄 Verificando conflicto entre nuevas asignaciones " + (i+1) + " y " + (j+1));
                     ScheduleConflict conflict = checkForConflictBetweenAssignments(
                             empAssignments.get(i), empAssignments.get(j));
                     if (conflict != null) {
-
+                        System.out.println("    ❌ CONFLICTO ENTRE NUEVAS: " + conflict.getMessage());
+                        conflicts.add(conflict);
+                    } else {
+                        System.out.println("    ✅ Sin conflicto entre nuevas asignaciones");
                     }
                 }
             }
         }
 
+        System.out.println("\n📊 RESULTADO DETECCIÓN:");
         if (!conflicts.isEmpty()) {
+            System.out.println("❌ TOTAL CONFLICTOS ENCONTRADOS: " + conflicts.size());
+            conflicts.forEach(c -> System.out.println("  - Employee " + c.getEmployeeId() +
+                    " en " + c.getConflictDate() + ": " + c.getMessage()));
         } else {
+            System.out.println("✅ No se encontraron conflictos");
         }
 
         return conflicts;
     }
     private ScheduleConflict checkForConflict(ScheduleAssignment assignment, EmployeeSchedule existing) {
-
 
         LocalDate newStart = assignment.getStartDate();
         LocalDate newEnd = (assignment.getEndDate() != null) ? assignment.getEndDate() : newStart;
@@ -444,13 +524,17 @@ public class EmployeeScheduleService {
         LocalDate existingStart = toLocalDate(existing.getStartDate());
         LocalDate existingEnd = (existing.getEndDate() != null) ? toLocalDate(existing.getEndDate()) : existingStart;
 
+        System.out.println("      🔍 Comparando fechas:");
+        System.out.println("        Nuevo: " + newStart + " al " + newEnd);
+        System.out.println("        Existente: " + existingStart + " al " + existingEnd);
 
-
-        // Verificar si las fechas se solapan
+        // ✅ VERIFICACIÓN PRINCIPAL: Si las fechas se solapan, ES CONFLICTO
         if (!datesOverlap(newStart, newEnd, existingStart, existingEnd)) {
+            System.out.println("        ✅ No hay solapamiento de fechas");
             return null;
         }
 
+        System.out.println("        ⚠️ FECHAS SE SOLAPAN - Verificando detalles...");
 
         // Obtener los turnos
         Shifts newShift = shiftsRepository.findById(assignment.getShiftId()).orElse(null);
@@ -460,34 +544,43 @@ public class EmployeeScheduleService {
             return createConflict(assignment, newStart, "No se pudo verificar turnos");
         }
 
-        // Verificar cada día en el período de solapamiento
+        System.out.println("        📋 Turnos:");
+        System.out.println("          Nuevo: " + newShift.getName() + " (ID: " + newShift.getId() + ")");
+        System.out.println("          Existente: " + existingShift.getName() + " (ID: " + existingShift.getId() + ")");
+
+        // ✅ NUEVA LÓGICA: Si las fechas se solapan, verificar si hay días laborales en común
         LocalDate overlapStart = Collections.max(Arrays.asList(newStart, existingStart));
         LocalDate overlapEnd = Collections.min(Arrays.asList(newEnd, existingEnd));
 
+        System.out.println("        📅 Período de solapamiento: " + overlapStart + " al " + overlapEnd);
 
+        // Verificar cada día en el período de solapamiento
         for (LocalDate date = overlapStart; !date.isAfter(overlapEnd); date = date.plusDays(1)) {
             int dayOfWeek = date.getDayOfWeek().getValue(); // 1=lunes, 7=domingo
             String dayName = getDayName(dayOfWeek);
 
+            System.out.println("          🗓️ " + dayName + " " + date + " (dow:" + dayOfWeek + ")");
 
             // Verificar si ambos turnos tienen actividad este día
             boolean newShiftHasThisDay = hasShiftActivityOnDay(newShift, dayOfWeek);
             boolean existingShiftHasThisDay = hasShiftActivityOnDay(existingShift, dayOfWeek);
 
-
+            System.out.println("            Turno nuevo activo: " + newShiftHasThisDay);
+            System.out.println("            Turno existente activo: " + existingShiftHasThisDay);
 
             if (newShiftHasThisDay && existingShiftHasThisDay) {
-                // Ambos turnos están activos este día - verificar solapamiento de horarios
-                if (hasTimeOverlap(newShift, existingShift, dayOfWeek)) {
-                    return createConflict(assignment, date,
-                            "Conflicto de horarios el " + dayName + " " + date +
-                                    ": El empleado ya tiene un turno asignado en horarios que se solapan");
-                } else {
-                }
+                // ✅ CONFLICTO DETECTADO: Ambos turnos activos el mismo día
+                System.out.println("            ❌ CONFLICTO: Ambos turnos activos el mismo día");
+
+                return createConflict(assignment, date,
+                        "Conflicto de fechas el " + dayName + " " + date +
+                                ": El empleado ya tiene un turno asignado para esta fecha");
             } else {
+                System.out.println("            ✅ No hay conflicto este día");
             }
         }
 
+        System.out.println("        ✅ No se encontraron conflictos en el solapamiento");
         return null;
     }
 
@@ -693,10 +786,30 @@ public class EmployeeScheduleService {
         if (employeeId == null || employeeId <= 0) {
             throw new IllegalArgumentException("Employee ID debe ser un número válido.");
         }
-        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(employeeId);
-        return schedules.stream().map(this::convertToDTO).collect(Collectors.toList());
-    }
 
+        System.out.println("🔍 Buscando schedules para employeeId: " + employeeId);
+
+        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(employeeId);
+
+        System.out.println("📋 Schedules encontrados en BD: " + schedules.size());
+        schedules.forEach(schedule -> {
+            System.out.println("   - Schedule ID: " + schedule.getId() +
+                    ", EmployeeId: " + schedule.getEmployeeId() +
+                    ", ShiftId: " + (schedule.getShift() != null ? schedule.getShift().getId() : "null") +
+                    ", ShiftName: " + (schedule.getShift() != null ? schedule.getShift().getName() : "null"));
+        });
+
+        List<EmployeeScheduleDTO> result = schedules.stream().map(this::convertToDTO).collect(Collectors.toList());
+
+        System.out.println("✅ DTOs convertidos: " + result.size());
+        result.forEach(dto -> {
+            System.out.println("   - DTO ID: " + dto.getId() +
+                    ", NumberId: " + dto.getNumberId() +
+                    ", ShiftName: " + dto.getShiftName());
+        });
+
+        return result;
+    }
     @Transactional
     public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId,
                                                                 LocalDate startDate,
@@ -722,6 +835,11 @@ public class EmployeeScheduleService {
         dto.setNumberId(Long.valueOf(schedule.getEmployeeId().toString()));
         dto.setStartDate(dateFormat.format(schedule.getStartDate()));
         dto.setEndDate(schedule.getEndDate() != null ? dateFormat.format(schedule.getEndDate()) : null);
+
+        // NUEVO: Agregar información del turno
+        if (schedule.getShift() != null) {
+            dto.setShiftName(schedule.getShift().getName());
+        }
 
         try {
             EmployeeResponse response = getEmployeeData(schedule.getEmployeeId());
