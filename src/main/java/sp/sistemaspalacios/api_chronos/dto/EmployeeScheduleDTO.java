@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 
 import java.util.Map;
+
 @Data
 @JsonInclude(JsonInclude.Include.ALWAYS) // Forzar inclusión de todos los campos
 public class EmployeeScheduleDTO {
@@ -22,8 +23,19 @@ public class EmployeeScheduleDTO {
     private Long daysParentId;  // Asegúrate que este campo existe
     private Map<String, Object> days;  // Asegúrate que este campo existe
 
-    // Constructor completo
+    // ========== NUEVO CAMPO PARA LAS HORAS ==========
+    private Double hoursInPeriod;  // 🔥 ESTE ES EL CAMPO QUE NECESITAMOS
+
+    // Constructor vacío
     public EmployeeScheduleDTO() {
+    }
+
+    // Constructor completo
+    public EmployeeScheduleDTO(Long id, Long numberId, String firstName, String secondName,
+                               String surName, String secondSurname, String dependency,
+                               String position, String startDate, String endDate,
+                               ShiftsDTO shift, String shiftName, Long daysParentId,
+                               Map<String, Object> days, Double hoursInPeriod) {
         this.id = id;
         this.numberId = numberId;
         this.firstName = firstName;
@@ -35,14 +47,13 @@ public class EmployeeScheduleDTO {
         this.startDate = startDate;
         this.endDate = endDate;
         this.shift = shift;
-        this.shiftName = shiftName;  // 🆕 AGREGADO AL CONSTRUCTOR
+        this.shiftName = shiftName;
         this.daysParentId = daysParentId;
         this.days = days;
+        this.hoursInPeriod = hoursInPeriod;  // 🔥 NUEVO
     }
 
-    public EmployeeScheduleDTO(Long id, Long id1, Object name, Long id2, String name1, String string, String string1, Long daysParentId, Map<String, Object> daysStructure) {
-    }
-
+    // Getters y Setters existentes
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 
@@ -76,9 +87,18 @@ public class EmployeeScheduleDTO {
     public ShiftsDTO getShift() { return shift; }
     public void setShift(ShiftsDTO shift) { this.shift = shift; }
 
-    // 🆕 NUEVOS GETTERS Y SETTERS PARA SHIFTNAME
     public String getShiftName() { return shiftName; }
     public void setShiftName(String shiftName) { this.shiftName = shiftName; }
+
+    public Long getDaysParentId() { return daysParentId; }
+    public void setDaysParentId(Long daysParentId) { this.daysParentId = daysParentId; }
+
+    public Map<String, Object> getDays() { return days; }
+    public void setDays(Map<String, Object> days) { this.days = days; }
+
+    // ========== NUEVO GETTER Y SETTER PARA HORAS ==========
+    public Double getHoursInPeriod() { return hoursInPeriod; }
+    public void setHoursInPeriod(Double hoursInPeriod) { this.hoursInPeriod = hoursInPeriod; }
 
     public Object getName() {
         return null;

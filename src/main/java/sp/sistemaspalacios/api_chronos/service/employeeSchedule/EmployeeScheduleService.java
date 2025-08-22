@@ -20,6 +20,7 @@ import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeSched
 import sp.sistemaspalacios.api_chronos.dto.EmployeeResponse;
 import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
 import sp.sistemaspalacios.api_chronos.dto.ScheduleAssignmentGroupDTO;
+import sp.sistemaspalacios.api_chronos.dto.ScheduleDetailDTO;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleTimeBlock;
@@ -516,6 +517,7 @@ public class EmployeeScheduleService {
 
         return conflicts;
     }
+
     private ScheduleConflict checkForConflict(ScheduleAssignment assignment, EmployeeSchedule existing) {
 
         LocalDate newStart = assignment.getStartDate();
@@ -584,9 +586,6 @@ public class EmployeeScheduleService {
         return null;
     }
 
-
-
-
     private boolean hasShiftActivityOnDay(Shifts shift, int dayOfWeek) {
         if (shift == null || shift.getShiftDetails() == null) {
             return false;
@@ -598,8 +597,6 @@ public class EmployeeScheduleService {
                         detail.getStartTime() != null &&
                         detail.getEndTime() != null);
     }
-
-
 
     private boolean hasTimeOverlap(Shifts shift1, Shifts shift2, int dayOfWeek) {
         List<ShiftDetail> details1 = shift1.getShiftDetails().stream()
@@ -613,7 +610,6 @@ public class EmployeeScheduleService {
         if (details1.isEmpty() || details2.isEmpty()) {
             return false;
         }
-
 
         // Verificar cada combinación de horarios
         for (ShiftDetail d1 : details1) {
@@ -630,8 +626,6 @@ public class EmployeeScheduleService {
         return false;
     }
 
-
-
     private String getDayName(int dayOfWeek) {
         switch (dayOfWeek) {
             case 1: return "Lunes";
@@ -645,20 +639,15 @@ public class EmployeeScheduleService {
         }
     }
 
-
-
-
     private boolean timePeriodsOverlap(String start1, String end1, String start2, String end2) {
         try {
-            if (start1 == null || end1 == null || start2 == null || end2 == null) {
-                return false;
-            }
+            if (start1 == null || end1 == null || start2 == null || end2 == null) return false;
 
-            // Normalizar formato a HH:mm:ss si es necesario
-            String s1 = normalizeTimeFormat(start1);
-            String e1 = normalizeTimeFormat(end1);
-            String s2 = normalizeTimeFormat(start2);
-            String e2 = normalizeTimeFormat(end2);
+            // Normalizar a HH:mm:ss
+            String s1 = start1.contains(":") && start1.split(":").length == 2 ? start1 + ":00" : start1;
+            String e1 = end1.contains(":") && end1.split(":").length == 2 ? end1 + ":00" : end1;
+            String s2 = start2.contains(":") && start2.split(":").length == 2 ? start2 + ":00" : start2;
+            String e2 = end2.contains(":") && end2.split(":").length == 2 ? end2 + ":00" : end2;
 
             Time startTime1 = Time.valueOf(s1);
             Time endTime1 = Time.valueOf(e1);
@@ -666,19 +655,12 @@ public class EmployeeScheduleService {
             Time endTime2 = Time.valueOf(e2);
 
             // Los períodos se solapan si: start1 < end2 && start2 < end1
-            boolean overlap = startTime1.before(endTime2) && startTime2.before(endTime1);
-
-            System.out.println("           📊 " + s1 + "-" + e1 + " vs " + s2 + "-" + e2 + " = " +
-                    (overlap ? "SOLAPAN" : "NO SOLAPAN"));
-
-            return overlap;
+            return startTime1.before(endTime2) && startTime2.before(endTime1);
 
         } catch (Exception e) {
-            System.err.println("❌ Error comparing times: " + e.getMessage());
-            return false;
+            return false; // En caso de error, asumir que no hay conflicto
         }
     }
-
 
     private String normalizeTimeFormat(String time) {
         if (time == null) return "00:00:00";
@@ -697,7 +679,6 @@ public class EmployeeScheduleService {
         return time + ":00:00";
     }
 
-
     private ScheduleConflict createConflict(ScheduleAssignment assignment, LocalDate conflictDate, String message) {
         ScheduleConflict conflict = new ScheduleConflict();
         conflict.setEmployeeId(assignment.getEmployeeId());
@@ -706,16 +687,16 @@ public class EmployeeScheduleService {
         return conflict;
     }
 
-
-
     private ScheduleConflict checkForConflictBetweenAssignments(ScheduleAssignment a1, ScheduleAssignment a2) {
         LocalDate s1 = a1.getStartDate();
         LocalDate e1 = (a1.getEndDate() != null) ? a1.getEndDate() : s1;
         LocalDate s2 = a2.getStartDate();
         LocalDate e2 = (a2.getEndDate() != null) ? a2.getEndDate() : s2;
 
+        // Si las fechas no se solapan, no hay conflicto
         if (!datesOverlap(s1, e1, s2, e2)) return null;
 
+        // ✅ NUEVA VALIDACIÓN: Verificar si los turnos se solapan en horario
         Shifts sh1 = shiftsRepository.findById(a1.getShiftId()).orElse(null);
         Shifts sh2 = shiftsRepository.findById(a2.getShiftId()).orElse(null);
         if (sh1 == null || sh2 == null) return null;
@@ -723,22 +704,37 @@ public class EmployeeScheduleService {
         LocalDate overlapStart = Collections.max(Arrays.asList(s1, s2));
         LocalDate overlapEnd = Collections.min(Arrays.asList(e1, e2));
 
-        // VALIDACIÓN CORREGIDA: Verificar conflictos día por día basándose en shift_details
+        // ✅ VALIDACIÓN SIMPLE: Verificar cada día en el solapamiento
         for (LocalDate d = overlapStart; !d.isAfter(overlapEnd); d = d.plusDays(1)) {
             int dow = d.getDayOfWeek().getValue();
 
-            // Verificar si AMBOS turnos tienen actividad en este día de la semana
+            // ¿Ambos turnos tienen actividad este día?
             boolean sh1HasThisDay = sh1.getShiftDetails() != null &&
-                    sh1.getShiftDetails().stream().anyMatch(dd -> dd.getDayOfWeek() != null && dd.getDayOfWeek() == dow);
+                    sh1.getShiftDetails().stream().anyMatch(dd ->
+                            dd.getDayOfWeek() != null && dd.getDayOfWeek() == dow &&
+                                    dd.getStartTime() != null && dd.getEndTime() != null);
+
             boolean sh2HasThisDay = sh2.getShiftDetails() != null &&
-                    sh2.getShiftDetails().stream().anyMatch(dd -> dd.getDayOfWeek() != null && dd.getDayOfWeek() == dow);
+                    sh2.getShiftDetails().stream().anyMatch(dd ->
+                            dd.getDayOfWeek() != null && dd.getDayOfWeek() == dow &&
+                                    dd.getStartTime() != null && dd.getEndTime() != null);
 
             if (sh1HasThisDay && sh2HasThisDay) {
-                ScheduleConflict c = new ScheduleConflict();
-                c.setEmployeeId(a1.getEmployeeId());
-                c.setConflictDate(d);
-                c.setMessage("Conflicto el día " + d + " - múltiples turnos nuevos asignados para la misma fecha");
-                return c;
+                // ✅ VERIFICAR HORARIOS: ¿Se solapan los horarios este día?
+                boolean hasTimeConflict = sh1.getShiftDetails().stream()
+                        .filter(d1 -> d1.getDayOfWeek() != null && d1.getDayOfWeek() == dow)
+                        .anyMatch(d1 -> sh2.getShiftDetails().stream()
+                                .filter(d2 -> d2.getDayOfWeek() != null && d2.getDayOfWeek() == dow)
+                                .anyMatch(d2 -> timePeriodsOverlap(d1.getStartTime(), d1.getEndTime(),
+                                        d2.getStartTime(), d2.getEndTime())));
+
+                if (hasTimeConflict) {
+                    ScheduleConflict c = new ScheduleConflict();
+                    c.setEmployeeId(a1.getEmployeeId());
+                    c.setConflictDate(d);
+                    c.setMessage("Conflicto el día " + d + " - Los turnos se solapan en horario");
+                    return c;
+                }
             }
         }
         return null;
@@ -782,12 +778,13 @@ public class EmployeeScheduleService {
         return convertToDTO(schedule);
     }
 
+    // ========== MÉTODO PRINCIPAL MODIFICADO CON CÁLCULO DE HORAS ==========
     public List<EmployeeScheduleDTO> getSchedulesByEmployeeId(Long employeeId) {
         if (employeeId == null || employeeId <= 0) {
             throw new IllegalArgumentException("Employee ID debe ser un número válido.");
         }
 
-        System.out.println("🔍 Buscando schedules para employeeId: " + employeeId);
+        System.out.println("🔍 Buscando schedules CON HORAS para employeeId: " + employeeId);
 
         List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(employeeId);
 
@@ -799,17 +796,22 @@ public class EmployeeScheduleService {
                     ", ShiftName: " + (schedule.getShift() != null ? schedule.getShift().getName() : "null"));
         });
 
-        List<EmployeeScheduleDTO> result = schedules.stream().map(this::convertToDTO).collect(Collectors.toList());
+        // 🔥 USAR EL MÉTODO MEJORADO QUE CALCULA HORAS
+        List<EmployeeScheduleDTO> result = schedules.stream()
+                .map(this::convertToDTOWithHours)  // ← MÉTODO NUEVO
+                .collect(Collectors.toList());
 
-        System.out.println("✅ DTOs convertidos: " + result.size());
+        System.out.println("✅ DTOs convertidos CON HORAS: " + result.size());
         result.forEach(dto -> {
             System.out.println("   - DTO ID: " + dto.getId() +
                     ", NumberId: " + dto.getNumberId() +
-                    ", ShiftName: " + dto.getShiftName());
+                    ", ShiftName: " + dto.getShiftName() +
+                    ", HoursInPeriod: " + dto.getHoursInPeriod());  // 🔥 AQUÍ DEBERÍAN APARECER LAS HORAS
         });
 
         return result;
     }
+
     @Transactional
     public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId,
                                                                 LocalDate startDate,
@@ -829,6 +831,7 @@ public class EmployeeScheduleService {
         employeeScheduleRepository.deleteById(id);
     }
 
+    // ========== MÉTODO ORIGINAL (sin horas) ==========
     private EmployeeScheduleDTO convertToDTO(EmployeeSchedule schedule) {
         EmployeeScheduleDTO dto = new EmployeeScheduleDTO();
         dto.setId(schedule.getId());
@@ -836,7 +839,7 @@ public class EmployeeScheduleService {
         dto.setStartDate(dateFormat.format(schedule.getStartDate()));
         dto.setEndDate(schedule.getEndDate() != null ? dateFormat.format(schedule.getEndDate()) : null);
 
-        // NUEVO: Agregar información del turno
+        // Agregar información del turno
         if (schedule.getShift() != null) {
             dto.setShiftName(schedule.getShift().getName());
         }
@@ -851,6 +854,29 @@ public class EmployeeScheduleService {
                 dto.setSecondSurname(emp.getSecondSurname() != null ? emp.getSecondSurname() : "");
             }
         } catch (Exception ignore) { }
+        return dto;
+    }
+
+    // ========== MÉTODO NUEVO CON CÁLCULO DE HORAS ==========
+    private EmployeeScheduleDTO convertToDTOWithHours(EmployeeSchedule schedule) {
+        // Crear DTO básico con el método original
+        EmployeeScheduleDTO dto = convertToDTO(schedule);
+
+        // 🔥 AGREGAR CÁLCULO DE HORAS usando el servicio de grupos
+        try {
+            // Usar el método público del ScheduleAssignmentGroupService
+            ScheduleDetailDTO detailWithHours = groupService.createScheduleDetailWithCalculation(schedule);
+
+            // Transferir las horas calculadas al DTO
+            dto.setHoursInPeriod(detailWithHours.getHoursInPeriod());
+
+            System.out.println("💰 Horas calculadas para schedule " + schedule.getId() + ": " + detailWithHours.getHoursInPeriod());
+
+        } catch (Exception e) {
+            System.err.println("❌ Error calculando horas para schedule " + schedule.getId() + ": " + e.getMessage());
+            dto.setHoursInPeriod(0.0); // Valor por defecto en caso de error
+        }
+
         return dto;
     }
 
