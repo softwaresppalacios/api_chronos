@@ -1,10 +1,11 @@
 package sp.sistemaspalacios.api_chronos.service.employeeSchedule;
 
-import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import sp.sistemaspalacios.api_chronos.dto.OvertimeTypeDTO;
 import sp.sistemaspalacios.api_chronos.dto.ScheduleAssignmentGroupDTO;
 import sp.sistemaspalacios.api_chronos.dto.ScheduleDetailDTO;
@@ -186,22 +187,55 @@ public class ScheduleAssignmentGroupService {
         for (EmployeeSchedule schedule : schedules) {
             if (schedule.getShift() == null || schedule.getShift().getShiftDetails() == null) continue;
 
-            DatePeriod period = DatePeriod.fromSchedule(schedule);
-            LocalDate start = period.getStartLocalDate();
-            LocalDate end = period.getEndLocalDate();
+            System.out.println("🔍 PROCESANDO Schedule ID: " + schedule.getId());
 
-            long spanDays = java.time.temporal.ChronoUnit.DAYS.between(start, end);
-            if (spanDays >= 7 && end.getDayOfWeek().equals(start.getDayOfWeek())) end = end.minusDays(1);
+            // CAMBIO CRÍTICO: Siempre usar rango de fechas como fallback
+            List<LocalDate> datesToProcess;
 
-            for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
+            if (schedule.getDays() != null && !schedule.getDays().isEmpty()) {
+                // Usar días generados (respeta exenciones)
+                datesToProcess = schedule.getDays().stream()
+                        .filter(Objects::nonNull)
+                        .map(d -> d.getDate())
+                        .filter(Objects::nonNull)
+                        .map(jd -> {
+                            if (jd instanceof java.sql.Date) {
+                                return ((java.sql.Date) jd).toLocalDate();
+                            }
+                            return jd.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+                        })
+                        .distinct()
+                        .sorted()
+                        .collect(Collectors.toList());
+
+                System.out.println("   📋 Usando días generados: " + datesToProcess.size() + " días");
+            } else {
+                // FALLBACK MEJORADO: Usar rango completo pero verificar festivos
+                DatePeriod period = DatePeriod.fromSchedule(schedule);
+                LocalDate start = period.getStartLocalDate();
+                LocalDate end = period.getEndLocalDate();
+
+                List<LocalDate> tmp = new ArrayList<>();
+                for (LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
+                    // INCLUIR festivos por defecto si no hay días generados
+                    // (esto evita que se pierdan festivos en recálculos)
+                    tmp.add(date);
+                }
+                datesToProcess = tmp;
+
+                System.out.println("   🔄 Usando rango completo (fallback): " + datesToProcess.size() + " días");
+                System.out.println("   ⚠️  ADVERTENCIA: Schedule sin días generados - podrían perderse exenciones");
+            }
+
+            // Procesar cada fecha válida
+            for (LocalDate date : datesToProcess) {
                 int dow = date.getDayOfWeek().getValue();
+
                 for (ShiftDetail d : schedule.getShift().getShiftDetails()) {
                     if (!Objects.equals(d.getDayOfWeek(), dow) || d.getStartTime() == null || d.getEndTime() == null)
                         continue;
 
                     TimeUtils.DayNightSplit split = TimeUtils.splitDayNight(d.getStartTime(), d.getEndTime(), nightStart, nightEnd);
-                    log.debug("⏱️ {} dow={} {}-{} => diurno={}min, nocturno={}min (NIGHT_START={}min)",
-                            date, dow, d.getStartTime(), d.getEndTime(), split.dayMinutes, split.nightMinutes, nightStart);
 
                     if (split.dayMinutes > 0) {
                         HourDetail hd = new HourDetail();
@@ -227,8 +261,13 @@ public class ScheduleAssignmentGroupService {
             }
         }
 
-        // Orden por fecha (los segmentos ya son por día; no necesitamos ordenar por hora)
         all.sort(Comparator.comparing((HourDetail h) -> h.date));
+
+        System.out.println("📈 TOTAL SEGMENTOS PROCESADOS: " + all.size());
+        Map<Boolean, Long> byHoliday = all.stream().collect(Collectors.groupingBy(h -> h.isHoliday, Collectors.counting()));
+        System.out.println("   🎉 Segmentos festivos: " + byHoliday.getOrDefault(true, 0L));
+        System.out.println("   📅 Segmentos normales: " + byHoliday.getOrDefault(false, 0L));
+
         return all;
     }
 
@@ -241,60 +280,79 @@ public class ScheduleAssignmentGroupService {
         Map<String, BigDecimal> hoursByType = new HashMap<>();
         Map<String, BigDecimal> accumulatedByWeek = new HashMap<>();
 
-        WeekFields wf = WeekFields.ISO; // lunes—domingo
+        WeekFields wf = WeekFields.ISO; // lunes–domingo
 
-        log.info("🚀 INICIANDO ASIGNACIÓN DE HORAS - Límite semanal: {}h", weeklyLimit);
+        log.info("🚀 INICIANDO ASIGNACIÓN CORREGIDA (festivos reemplazan) - Límite semanal: {}h", weeklyLimit);
         log.info("📊 Total de segmentos a procesar: {}", segments.size());
 
         for (HourDetail seg : segments) {
-            String weekKey = weekKey(seg.date, wf); // ej: "2025-W34"
+            String weekKey = weekKey(seg.date, wf);
             BigDecimal acc = accumulatedByWeek.getOrDefault(weekKey, BigDecimal.ZERO);
 
             BigDecimal hours = BigDecimal.valueOf(seg.segmentMinutes)
                     .divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
 
-            boolean exceeds = acc.compareTo(weeklyLimit) >= 0;
-            BigDecimal remaining = weeklyLimit.subtract(acc);
-
             String baseCode = determineBaseOvertimeCode(seg);
-            String finalCode = baseCode;
 
-            log.debug("📅 {} [{}] - {}min = {}h | Acum: {}h | Base: {} | Excede: {}",
-                    seg.date, weekKey, seg.segmentMinutes, hours, acc, baseCode, exceeds);
+            log.debug("📅 {} [{}] - {}min = {}h | Acum: {}h | Festivo: {} | Domingo: {}",
+                    seg.date, weekKey, seg.segmentMinutes, hours, acc, seg.isHoliday, seg.isSunday);
 
-            if (exceeds) {
-                // Todo el segmento ya es extra
-                finalCode = convertToExtraType(baseCode, seg, availableTypes);
-                addHoursToMap(hoursByType, finalCode, hours);
-                acc = acc.add(hours);
-                log.info("🔴 {} [{}] EXCESO TOTAL: +{}h como {} (acum: {}h)",
-                        seg.date, weekKey, hours, finalCode, acc);
-            } else if (remaining.compareTo(hours) < 0) {
-                // Parte regular dentro del límite + parte extra excedente
-                BigDecimal regularPart = remaining.max(BigDecimal.ZERO);
-                BigDecimal extraPart = hours.subtract(regularPart);
+            if (seg.isHoliday) {
+                // FESTIVO: Va como FESTIVO_* y NO incrementa el acumulado semanal
+                String festivoCode = convertToFestivoType(baseCode, seg, availableTypes);
+                addHoursToMap(hoursByType, festivoCode, hours);
+                log.info("🎉 {} [{}] FESTIVO: +{}h como {} (reemplaza regulares, NO suma a acumulado)",
+                        seg.date, weekKey, hours, festivoCode);
+                // NO incrementar accumulatedByWeek - las horas festivas no cuentan para límite
+            }
+            else if (seg.isSunday) {
+                // DOMINICAL: Va como EXTRA_DOMINICAL_* y NO incrementa el acumulado semanal
+                String dominicalCode = convertToExtraType(baseCode, seg, availableTypes);
+                addHoursToMap(hoursByType, dominicalCode, hours);
+                log.info("🏛️ {} [{}] DOMINICAL: +{}h como {} (NO suma a acumulado)",
+                        seg.date, weekKey, hours, dominicalCode);
+                // NO incrementar accumulatedByWeek - los dominicales no cuentan para límite
+            }
+            else {
+                // === DÍAS NORMALES: APLICAR LÍMITE SEMANAL ===
+                boolean exceeds = acc.compareTo(weeklyLimit) >= 0;
+                BigDecimal remaining = weeklyLimit.subtract(acc);
 
-                if (regularPart.compareTo(BigDecimal.ZERO) > 0) {
-                    addHoursToMap(hoursByType, baseCode, regularPart);
-                    log.info("🟢 {} [{}] REGULAR: +{}h como {}",
-                            seg.date, weekKey, regularPart, baseCode);
+                if (exceeds) {
+                    // Ya se superó el límite, todo es extra
+                    String extraCode = convertToExtraType(baseCode, seg, availableTypes);
+                    addHoursToMap(hoursByType, extraCode, hours);
+                    acc = acc.add(hours);
+                    log.info("🔴 {} [{}] EXCESO TOTAL: +{}h como {} (acum: {}h)",
+                            seg.date, weekKey, hours, extraCode, acc);
+                } else if (remaining.compareTo(hours) < 0) {
+                    // Parte regular + parte extra
+                    BigDecimal regularPart = remaining.max(BigDecimal.ZERO);
+                    BigDecimal extraPart = hours.subtract(regularPart);
+
+                    if (regularPart.compareTo(BigDecimal.ZERO) > 0) {
+                        addHoursToMap(hoursByType, baseCode, regularPart);
+                        log.info("🟢 {} [{}] REGULAR: +{}h como {}",
+                                seg.date, weekKey, regularPart, baseCode);
+                    }
+
+                    String extraCode = convertToExtraType(baseCode, seg, availableTypes);
+                    addHoursToMap(hoursByType, extraCode, extraPart);
+                    log.info("🟡 {} [{}] EXCESO PARCIAL: +{}h como {} (acum: {}h)",
+                            seg.date, weekKey, extraPart, extraCode, acc.add(hours));
+
+                    acc = acc.add(hours);
+                } else {
+                    // Todo cabe como regular
+                    addHoursToMap(hoursByType, baseCode, hours);
+                    acc = acc.add(hours);
+                    log.debug("🟢 {} [{}] REGULAR TOTAL: +{}h como {} (acum: {}h)",
+                            seg.date, weekKey, hours, baseCode, acc);
                 }
 
-                finalCode = convertToExtraType(baseCode, seg, availableTypes);
-                addHoursToMap(hoursByType, finalCode, extraPart);
-                log.info("🟡 {} [{}] EXCESO PARCIAL: +{}h como {} (acum: {}h)",
-                        seg.date, weekKey, extraPart, finalCode, acc.add(hours));
-
-                acc = acc.add(hours);
-            } else {
-                // Todo el segmento cabe como regular
-                addHoursToMap(hoursByType, baseCode, hours);
-                acc = acc.add(hours);
-                log.debug("🟢 {} [{}] REGULAR TOTAL: +{}h como {} (acum: {}h)",
-                        seg.date, weekKey, hours, baseCode, acc);
+                // SOLO incrementar acumulado para días normales
+                accumulatedByWeek.put(weekKey, acc);
             }
-
-            accumulatedByWeek.put(weekKey, acc);
         }
 
         // Log de resumen final
@@ -304,13 +362,25 @@ public class ScheduleAssignmentGroupService {
                 .sorted(Map.Entry.<String, BigDecimal>comparingByValue().reversed())
                 .forEach(e -> log.info("   {} = {}h", e.getKey(), e.getValue()));
 
-        // Log de acumulados por semana
         if (!accumulatedByWeek.isEmpty()) {
-            log.info("📆 Resumen acumulados por semana (límite {}h): {}", weeklyLimit, accumulatedByWeek);
+            log.info("📆 Acumulados por semana (límite {}h, SOLO días normales): {}", weeklyLimit, accumulatedByWeek);
         }
 
         return hoursByType;
     }
+
+
+    private String convertToFestivoType(String baseCode, HourDetail d, Map<String, OvertimeTypeDTO> availableTypes) {
+        String festivoCode = d.isNightSegment ? "FESTIVO_NOCTURNA" : "FESTIVO_DIURNA";
+
+        if (availableTypes.containsKey(festivoCode)) {
+            return festivoCode;
+        }
+
+        log.warn("⚠️ Tipo FESTIVO no encontrado en BD: {}. Usando fallback.", festivoCode);
+        return d.isNightSegment ? "FESTIVO_NOCTURNA" : "FESTIVO_DIURNA";
+    }
+
 
     private String weekKey(LocalDate date, WeekFields wf) {
         int y = date.get(wf.weekBasedYear());
@@ -422,7 +492,8 @@ public class ScheduleAssignmentGroupService {
         dto.setOvertimeType(group.getOvertimeType());
         dto.setFestivoHours(group.getFestivoHours());
         dto.setFestivoType(group.getFestivoType());
-        dto.setStatus(group.getStatus());
+        dto.setStatus(getEffectiveStatus(group));
+
         dto.setEmployeeScheduleIds(group.getEmployeeScheduleIds());
 
         Map<String, Object> breakdown = createBreakdown(calc.getHoursByType());
@@ -516,34 +587,59 @@ public class ScheduleAssignmentGroupService {
     private ScheduleDetailDTO createScheduleDetail(EmployeeSchedule schedule) {
         return createScheduleDetailWithCalculation(schedule);
     }
+    private String getEffectiveStatus(ScheduleAssignmentGroup group) {
+        LocalDate today = LocalDate.now();
+
+        // Si no hay fin de periodo, asume activo
+        Date end = group.getPeriodEnd();
+        if (end == null) return "ACTIVE";
+
+        LocalDate endDate;
+        if (end instanceof java.sql.Date) {
+            // ✅ camino seguro para java.sql.Date
+            endDate = ((java.sql.Date) end).toLocalDate();
+        } else {
+            // ✅ camino seguro para java.util.Date
+            endDate = java.time.Instant.ofEpochMilli(end.getTime())
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDate();
+        }
+
+        return today.isAfter(endDate) ? "INACTIVE" : "ACTIVE";
+    }
 
     // ========== MÉTODO NUEVO AGREGADO AQUÍ ==========
     public ScheduleDetailDTO createScheduleDetailWithCalculation(EmployeeSchedule schedule) {
-        // Crear el DTO normal
         ScheduleDetailDTO detail = new ScheduleDetailDTO();
+
         detail.setScheduleId(schedule.getId());
         detail.setShiftName(schedule.getShift() != null ? schedule.getShift().getName() : defaultShiftName);
+
         detail.setStartDate(dateFormat.format(schedule.getStartDate()));
         detail.setEndDate(dateFormat.format(schedule.getEndDate() != null ? schedule.getEndDate() : schedule.getStartDate()));
 
-        // Calcular horas solo para este turno individual
-        List<EmployeeSchedule> soloEste = Arrays.asList(schedule);
+        List<EmployeeSchedule> soloEste = Collections.singletonList(schedule);
         HoursCalculation calc = calculateHours(soloEste);
         HoursSummary summary = HoursSummary.fromCalculation(calc, overtimeTypeService.getAllActiveTypes());
 
-        // Poner las horas en hoursInPeriod
+        // TOTAL CORREGIDO: Solo horas que cuentan para límite (regular + extra)
         detail.setHoursInPeriod(summary.getTotalHours().doubleValue());
 
-        log.info("🔧 TURNO INDIVIDUAL [{}]: Regular={}h, Extra={}h, Festivo={}h, Total={}h",
+        detail.setRegularHours(summary.getRegularWithinLimit().doubleValue());
+        detail.setOvertimeHours(summary.getOvertimeHours().doubleValue());
+        detail.setFestivoHours(summary.getFestivoHours().doubleValue());
+        detail.setOvertimeType(summary.getOvertimeType());
+        detail.setFestivoType(summary.getFestivoType());
+
+        log.info("🧮 DETALLE TURNO [{}]: Regular={}h, Extra={}h, Festivo={}h (separado), Total={}h",
                 detail.getShiftName(),
-                summary.getRegularWithinLimit().doubleValue(),
-                summary.getOvertimeHours().doubleValue(),
-                summary.getFestivoHours().doubleValue(),
-                summary.getTotalHours().doubleValue());
+                detail.getRegularHours(),
+                detail.getOvertimeHours(),
+                detail.getFestivoHours(),
+                detail.getHoursInPeriod());
 
         return detail;
     }
-
     // ===== Validaciones / utilidades de repos =====
     private void validateInputs(Long employeeId, List<Long> scheduleIds) {
         if (employeeId == null) throw new IllegalArgumentException("Employee ID no puede ser nulo");
@@ -581,14 +677,37 @@ public class ScheduleAssignmentGroupService {
     }
 
     private ScheduleAssignmentGroup updateExistingGroup(ScheduleAssignmentGroup group, List<Long> scheduleIds, DatePeriod period) {
+        System.out.println("🔄 ACTUALIZANDO GRUPO EXISTENTE:");
+        System.out.println("   👥 Employee: " + group.getEmployeeId());
+        System.out.println("   📋 Schedules actuales: " + group.getEmployeeScheduleIds());
+        System.out.println("   📋 Schedules nuevos: " + scheduleIds);
+        System.out.println("   📅 Período actual: " + dateFormat.format(group.getPeriodStart()) + " al " + dateFormat.format(group.getPeriodEnd()));
+        System.out.println("   📅 Período nuevo: " + dateFormat.format(period.getStartDate()) + " al " + dateFormat.format(period.getEndDate()));
+
+        // Guardar horas antes del cambio
+        BigDecimal oldFestivoHours = group.getFestivoHours();
+
         scheduleIds.forEach(id -> {
-            if (!group.getEmployeeScheduleIds().contains(id)) group.getEmployeeScheduleIds().add(id);
+            if (!group.getEmployeeScheduleIds().contains(id)) {
+                group.getEmployeeScheduleIds().add(id);
+                System.out.println("   ➕ Agregado schedule ID: " + id);
+            }
         });
-        if (period.getStartDate().before(group.getPeriodStart())) group.setPeriodStart(period.getStartDate());
-        if (period.getEndDate().after(group.getPeriodEnd())) group.setPeriodEnd(period.getEndDate());
+
+        if (period.getStartDate().before(group.getPeriodStart())) {
+            System.out.println("   📅 Extendiendo inicio: " + dateFormat.format(group.getPeriodStart()) + " → " + dateFormat.format(period.getStartDate()));
+            group.setPeriodStart(period.getStartDate());
+        }
+        if (period.getEndDate().after(group.getPeriodEnd())) {
+            System.out.println("   📅 Extendiendo fin: " + dateFormat.format(group.getPeriodEnd()) + " → " + dateFormat.format(period.getEndDate()));
+            group.setPeriodEnd(period.getEndDate());
+        }
+
+        System.out.println("   🎉 Horas festivas previas: " + oldFestivoHours + "h");
+        System.out.println("   📋 Total schedules en grupo: " + group.getEmployeeScheduleIds().size());
+
         return group;
     }
-
     private ScheduleAssignmentGroup createNewGroup(Long employeeId, List<Long> scheduleIds, DatePeriod period) {
         ScheduleAssignmentGroup group = new ScheduleAssignmentGroup();
         group.setEmployeeId(employeeId);
@@ -600,7 +719,13 @@ public class ScheduleAssignmentGroupService {
     }
 
     private Set<LocalDate> getHolidayDates() {
-        return holidayService.getAllHolidays().stream().map(h -> h.getHolidayDate()).collect(Collectors.toSet());
+        var list = holidayService.getAllHolidays();
+        if (list == null) return Collections.emptySet();
+        return list.stream()
+                .filter(Objects::nonNull)
+                .map(h -> h.getHolidayDate())
+                .filter(Objects::nonNull) // ← filtra fechas nulas
+                .collect(Collectors.toSet());
     }
 
     private BigDecimal getWeeklyHoursLimit() {
@@ -716,8 +841,8 @@ public class ScheduleAssignmentGroupService {
             Map<String, BigDecimal> byType = calc.getHoursByType();
 
             BigDecimal regularTotal = BigDecimal.ZERO;
-            BigDecimal extraTotal = BigDecimal.ZERO;    // ✅ Incluirá dominicales
-            BigDecimal festivoTotal = BigDecimal.ZERO;  // ✅ Solo festivos reales
+            BigDecimal extraTotal = BigDecimal.ZERO;
+            BigDecimal festivoTotal = BigDecimal.ZERO;
 
             Map<String, String> codeToName = types.stream()
                     .collect(Collectors.toMap(OvertimeTypeDTO::getCode, OvertimeTypeDTO::getDisplayName, (a, b) -> a));
@@ -727,120 +852,63 @@ public class ScheduleAssignmentGroupService {
             String predominantFestivoType = null;
             BigDecimal maxFestivoHours = BigDecimal.ZERO;
 
-            log.info("🔍 CÓDIGOS DISPONIBLES EN BD: {}", codeToName.keySet());
-            log.info("🔍 CÓDIGOS A CLASIFICAR: {}", byType.keySet());
-
-            // ===== SEPARACIÓN CLARA: DOMINICALES VAN A EXTRAS =====
+            log.info("🔍 CLASIFICACIÓN FINAL CORREGIDA:");
 
             Set<String> regularCodes = types.stream()
                     .map(OvertimeTypeDTO::getCode)
                     .filter(code -> code.startsWith("REGULAR_"))
                     .collect(Collectors.toSet());
 
-            // ✅ SOLO festivos reales (NO dominicales)
             Set<String> festivoCodes = types.stream()
                     .map(OvertimeTypeDTO::getCode)
                     .filter(code -> code.startsWith("FESTIVO_") && !code.contains("DOMINICAL"))
                     .collect(Collectors.toSet());
 
-            // ✅ Extras incluyen: EXTRA_* + DOMINICALES (porque son especiales)
             Set<String> extraCodes = types.stream()
                     .map(OvertimeTypeDTO::getCode)
-                    .filter(code -> code.startsWith("EXTRA_") ||
-                            code.startsWith("DOMINICAL_"))  // ← CLAVE: dominicales van a extras
+                    .filter(code -> code.startsWith("EXTRA_") || code.startsWith("DOMINICAL_"))
                     .collect(Collectors.toSet());
-
-            log.info("📋 CLASIFICACIÓN CORREGIDA:");
-            log.info("   🟢 Regular: {}", regularCodes);
-            log.info("   🔴 Extra (incluye dominicales): {}", extraCodes);
-            log.info("   🟡 Festivo (solo festivos reales): {}", festivoCodes);
 
             for (Map.Entry<String, BigDecimal> e : byType.entrySet()) {
                 String code = e.getKey();
                 BigDecimal hours = e.getValue();
                 if (hours.compareTo(BigDecimal.ZERO) <= 0) continue;
 
-                log.info("🔍 Clasificando: {} = {}h", code, hours);
-
                 if (extraCodes.contains(code)) {
-                    // ✅ EXTRAS: incluye EXTRA_* y DOMINICAL_*
                     extraTotal = extraTotal.add(hours);
                     if (hours.compareTo(maxExtraHours) > 0) {
                         maxExtraHours = hours;
                         predominantExtraType = codeToName.getOrDefault(code, code);
                     }
-                    log.info("   ✅ → EXTRA: {}h (total: {}h)", hours, extraTotal);
+                    log.info("   🔴 {} = {}h → EXTRA", code, hours);
 
                 } else if (festivoCodes.contains(code)) {
-                    // ✅ FESTIVOS: solo FESTIVO_* reales
                     festivoTotal = festivoTotal.add(hours);
                     if (hours.compareTo(maxFestivoHours) > 0) {
                         maxFestivoHours = hours;
                         predominantFestivoType = codeToName.getOrDefault(code, code);
                     }
-                    log.info("   ✅ → FESTIVO: {}h (total: {}h)", hours, festivoTotal);
+                    log.info("   🟡 {} = {}h → FESTIVO", code, hours);
 
                 } else if (regularCodes.contains(code)) {
-                    // ✅ REGULARES: solo REGULAR_*
                     regularTotal = regularTotal.add(hours);
-                    log.info("   ✅ → REGULAR: {}h (total: {}h)", hours, regularTotal);
-
-                } else if (codeToName.containsKey(code)) {
-                    // ⚠️ Código en BD pero no categorizado - clasificar por lógica
-                    log.warn("   ⚠️ Código en BD sin categoría: {}", code);
-
-                    if (code.contains("DOMINICAL")) {
-                        // Dominicales van a extras
-                        extraTotal = extraTotal.add(hours);
-                        if (hours.compareTo(maxExtraHours) > 0) {
-                            maxExtraHours = hours;
-                            predominantExtraType = codeToName.getOrDefault(code, code);
-                        }
-                        log.warn("   → DOMINICAL clasificado como EXTRA: {}h", hours);
-
-                    } else if (code.contains("FESTIVO")) {
-                        // Festivos van a festivos
-                        festivoTotal = festivoTotal.add(hours);
-                        if (hours.compareTo(maxFestivoHours) > 0) {
-                            maxFestivoHours = hours;
-                            predominantFestivoType = codeToName.getOrDefault(code, code);
-                        }
-                        log.warn("   → FESTIVO clasificado como FESTIVO: {}h", hours);
-
-                    } else if (code.contains("EXTRA")) {
-                        // Extras van a extras
-                        extraTotal = extraTotal.add(hours);
-                        if (hours.compareTo(maxExtraHours) > 0) {
-                            maxExtraHours = hours;
-                            predominantExtraType = codeToName.getOrDefault(code, code);
-                        }
-                        log.warn("   → EXTRA clasificado como EXTRA: {}h", hours);
-
-                    } else {
-                        // Fallback a regular
-                        regularTotal = regularTotal.add(hours);
-                        log.warn("   → Clasificado como REGULAR por defecto: {}h", hours);
-                    }
+                    log.info("   🟢 {} = {}h → REGULAR", code, hours);
 
                 } else {
-                    // ❌ Código no existe en BD
-                    log.error("   ❌ CÓDIGO NO EN BD: {} = {}h", code, hours);
-
-                    // Fallback por prefijo
+                    // Fallback
                     if (code.startsWith("EXTRA_") || code.contains("DOMINICAL")) {
                         extraTotal = extraTotal.add(hours);
-                        log.error("   → FALLBACK a EXTRA");
+                        log.info("   🔴 {} = {}h → EXTRA (fallback)", code, hours);
                     } else if (code.startsWith("FESTIVO_")) {
                         festivoTotal = festivoTotal.add(hours);
-                        log.error("   → FALLBACK a FESTIVO");
+                        log.info("   🟡 {} = {}h → FESTIVO (fallback)", code, hours);
                     } else {
                         regularTotal = regularTotal.add(hours);
-                        log.error("   → FALLBACK a REGULAR");
+                        log.info("   🟢 {} = {}h → REGULAR (fallback)", code, hours);
                     }
                 }
             }
 
-            // Tipos predominantes por defecto si están vacíos
             if (predominantExtraType == null && extraTotal.compareTo(BigDecimal.ZERO) > 0) {
                 predominantExtraType = "Horas Extra";
             }
@@ -848,26 +916,24 @@ public class ScheduleAssignmentGroupService {
                 predominantFestivoType = "Horas Festivas";
             }
 
-            BigDecimal total = regularTotal.add(festivoTotal).add(extraTotal);
+            // TOTAL CORREGIDO: regular + extra (festivos NO se suman al total)
+            BigDecimal total = regularTotal.add(extraTotal);
 
-            log.info("📊 RESULTADO FINAL CORREGIDO:");
+            log.info("📊 TOTALES FINALES CORREGIDOS:");
             log.info("   🟢 Regular: {}h", regularTotal);
-            log.info("   🔴 Extra (con dominicales): {}h", extraTotal);
-            log.info("   🟡 Festivo (solo festivos): {}h", festivoTotal);
-            log.info("   📊 TOTAL: {}h", total);
-            log.info("   🏷️ Predominantes: Extra='{}', Festivo='{}'",
-                    predominantExtraType, predominantFestivoType);
+            log.info("   🔴 Extra: {}h", extraTotal);
+            log.info("   🟡 Festivo: {}h (NO sumado al total)", festivoTotal);
+            log.info("   📊 TOTAL EFECTIVO: {}h (regular + extra)", total);
 
             return new HoursSummary(
-                    total,
+                    total,          // SOLO regular + extra
                     regularTotal,
-                    extraTotal,     // ← Incluye dominicales
-                    festivoTotal,   // ← Solo festivos reales
+                    extraTotal,
+                    festivoTotal,
                     predominantFestivoType,
                     predominantExtraType
             );
         }
-
         BigDecimal getTotalHours() {
             return totalHours;
         }
