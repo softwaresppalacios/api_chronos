@@ -32,7 +32,6 @@ import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeSched
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 import sp.sistemaspalacios.api_chronos.service.boundaries.generalConfiguration.GeneralConfigurationService;
 import sp.sistemaspalacios.api_chronos.service.boundaries.holiday.HolidayService;
-import sp.sistemaspalacios.api_chronos.service.employeeSchedule.HolidayExemptionService;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -143,7 +142,7 @@ public class EmployeeScheduleService {
         employeeScheduleRepository.flush();
         System.out.println("🔄 Flush ejecutado - " + created.size() + " schedules confirmados en BD");
 
-        // 4) AGRUPAR por empleado y CREAR/ACTUALIZAR grupo  (SIN try/catch que trague excepciones)
+        // 4) AGRUPAR por empleado y CREAR/ACTUALIZAR grupo
         Map<Long, List<Long>> idsPorEmpleado = created.stream()
                 .collect(Collectors.groupingBy(EmployeeSchedule::getEmployeeId,
                         Collectors.mapping(EmployeeSchedule::getId, Collectors.toList())));
@@ -157,20 +156,10 @@ public class EmployeeScheduleService {
             Long employeeId = e.getKey();
             List<Long> scheduleIds = e.getValue();
 
-            // Verificación opcional
             List<EmployeeSchedule> verification = employeeScheduleRepository.findAllById(scheduleIds);
             System.out.println("🔍 Verificación pre-grupo - Employee " + employeeId +
                     ": " + verification.size() + " schedules encontrados de " + scheduleIds.size());
 
-            if (verification.size() != scheduleIds.size()) {
-                System.err.println("❌ PROBLEMA: No todos los schedules existen en BD para employee " + employeeId);
-                scheduleIds.forEach(id -> {
-                    boolean exists = verification.stream().anyMatch(s -> s.getId().equals(id));
-                    System.err.println("    Schedule " + id + ": " + (exists ? "✅ existe" : "❌ NO EXISTE"));
-                });
-            }
-
-            // Deja que cualquier excepción SUBA (no marcará rollback-only silencioso)
             ScheduleAssignmentGroupDTO group = groupService.processScheduleAssignment(employeeId, scheduleIds);
             System.out.println("✅ Grupo procesado para employee " + employeeId +
                     ": group ID " + group.getId());
@@ -260,7 +249,6 @@ public class EmployeeScheduleService {
     public sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.EmployeeHoursSummary
     calculateEmployeeHoursSummary(Long employeeId) {
 
-        // Trae TODOS los grupos del empleado (cada grupo ya tiene sus totales calculados/persistidos)
         List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(employeeId);
 
         var s = new sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.EmployeeHoursSummary();
@@ -277,18 +265,17 @@ public class EmployeeScheduleService {
             return s;
         }
 
-        // Sumas consolidadas
         BigDecimal regular = BigDecimal.ZERO;
         BigDecimal extra   = BigDecimal.ZERO;
         BigDecimal festivo = BigDecimal.ZERO;
 
-        // Para predominantes y desglose: acumulamos por código
         Map<String, BigDecimal> breakdownSum = new HashMap<>();
 
         for (ScheduleAssignmentGroupDTO g : groups) {
             if (g.getRegularHours() != null) regular = regular.add(g.getRegularHours());
             if (g.getOvertimeHours() != null) extra   = extra.add(g.getOvertimeHours());
             if (g.getFestivoHours() != null)  festivo = festivo.add(g.getFestivoHours());
+
 
             if (g.getOvertimeBreakdown() != null) {
                 for (Map.Entry<String, Object> e : g.getOvertimeBreakdown().entrySet()) {
@@ -301,13 +288,9 @@ public class EmployeeScheduleService {
             }
         }
 
-        // Total efectivo (para límite/nómina) = regular + extra
         BigDecimal total = regular.add(extra);
-
-        // "Horas asignadas" para UI = regular + festivo
         BigDecimal assigned = regular.add(festivo);
 
-        // Determinar tipos predominantes
         String predominantExtra = null;
         BigDecimal maxExtra = BigDecimal.ZERO;
         String predominantFestivo = null;
@@ -329,20 +312,18 @@ public class EmployeeScheduleService {
             }
         }
 
-        s.setTotalHours(total.doubleValue());        // regular + extra
-        s.setAssignedHours(assigned.doubleValue());  // regular + festivo (lo que ve usuario como "asignadas")
+        s.setTotalHours(total.doubleValue());
+        s.setAssignedHours(assigned.doubleValue());
         s.setOvertimeHours(extra.doubleValue());
         s.setFestivoHours(festivo.doubleValue());
         s.setOvertimeType(predominantExtra != null ? predominantExtra : "Normal");
         s.setFestivoType(predominantFestivo);
 
-        // Exportar breakdown sumado como double
         Map<String, Object> bd = new HashMap<>();
         for (Map.Entry<String, BigDecimal> e : breakdownSum.entrySet()) {
             bd.put(e.getKey(), e.getValue().doubleValue());
         }
         s.setOvertimeBreakdown(bd);
-
         return s;
     }
 
@@ -413,61 +394,61 @@ public class EmployeeScheduleService {
     private void generateScheduleDaysWithHolidayDecisions(EmployeeSchedule schedule,
                                                           List<HolidayDecision> holidayDecisions) {
 
-        // Asegurar lista
         if (schedule.getDays() == null) {
             schedule.setDays(new ArrayList<>());
         } else {
             schedule.getDays().clear();
         }
 
-        // Fechas del período
         LocalDate startDate = (schedule.getStartDate() != null)
-                ? toLocalDate((java.sql.Date) schedule.getStartDate())
+                ? ((java.sql.Date) schedule.getStartDate()).toLocalDate()
                 : null;
         LocalDate endDate = (schedule.getEndDate() != null)
-                ? toLocalDate((java.sql.Date) schedule.getEndDate())
+                ? ((java.sql.Date) schedule.getEndDate()).toLocalDate()
                 : startDate;
 
         if (startDate == null) throw new IllegalStateException("StartDate es requerido");
         if (endDate == null) endDate = startDate;
 
-        // Detalles del turno
         List<ShiftDetail> details = (schedule.getShift() != null && schedule.getShift().getShiftDetails() != null)
                 ? schedule.getShift().getShiftDetails()
                 : Collections.emptyList();
 
-        // ================= SOLO EXENCIONES EXPLÍCITAS =================
-        // ÚNICAMENTE omitir días con exemptionReason explícito
-        Set<LocalDate> exemptDates = (holidayDecisions != null ? holidayDecisions : Collections.<HolidayDecision>emptyList())
+        // ====== MAPA DE DECISIONES ======
+        Map<LocalDate, HolidayDecision> decisionMap = (holidayDecisions != null ? holidayDecisions : Collections.<HolidayDecision>emptyList())
                 .stream()
                 .filter(Objects::nonNull)
                 .filter(h -> h.getHolidayDate() != null)
-                .filter(h -> h.getExemptionReason() != null && !h.getExemptionReason().isBlank())
-                .map(HolidayDecision::getHolidayDate)
+                .collect(Collectors.toMap(HolidayDecision::getHolidayDate, h -> h));
+
+        // ⛔ OMITIR SOLO cuando hay razón explícita (exención real)
+        Set<LocalDate> exemptDates = decisionMap.entrySet().stream()
+                .filter(entry -> {
+                    HolidayDecision v = entry.getValue();
+                    boolean hasReason = v.getExemptionReason() != null && !v.getExemptionReason().isBlank();
+                    return hasReason; // <<-- “No aplicar recargo” NO se omite
+                })
+                .map(Map.Entry::getKey)
                 .collect(Collectors.toSet());
 
-        System.out.println("🎯 GENERACIÓN CORREGIDA:");
+        System.out.println("🎯 GENERACIÓN CON DECISIONES:");
         System.out.println("   📅 Período: " + startDate + " al " + endDate);
-        System.out.println("   ⛔ ÚNICAMENTE días exentos: " + exemptDates);
+        System.out.println("   ⛔ Días OMITIDOS (solo exención con razón): " + exemptDates);
+        System.out.println("   📋 Decisiones totales: " + decisionMap.size());
 
         for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
             final LocalDate currentDay = d;
 
-            // ÚNICA condición de omisión: exemptionReason explícito
+            // Omitir solo si exento con razón
             if (exemptDates.contains(currentDay)) {
-                System.out.println("⛔ Día con exención explícita omitido: " + currentDay);
+                System.out.println("⛔ Día omitido (exención con razón): " + currentDay);
                 continue;
             }
 
             boolean isHoliday = holidayService.isHoliday(currentDay);
+            HolidayDecision decision = decisionMap.get(currentDay);
+            boolean treatAsHoliday = isHoliday && (decision == null || decision.isApplyHolidayCharge());
 
-            // ========== CAMBIO CRÍTICO: PROCESAR TODOS LOS FESTIVOS ==========
-            // Eliminar completamente la lógica de omisión para turnos largos
-            if (isHoliday) {
-                System.out.println("🎉 FESTIVO PROCESADO (sin omisiones): " + currentDay);
-            }
-
-            // === Generar el día normalmente ===
             EmployeeScheduleDay day = new EmployeeScheduleDay();
             day.setEmployeeSchedule(schedule);
             day.setDate(java.sql.Date.valueOf(currentDay));
@@ -475,7 +456,6 @@ public class EmployeeScheduleService {
             day.setCreatedAt(new Date());
             day.setTimeBlocks(new ArrayList<>());
 
-            // Generar bloques según los detalles del turno
             for (ShiftDetail sd : details) {
                 if (sd.getDayOfWeek() == null || !Objects.equals(sd.getDayOfWeek(), currentDay.getDayOfWeek().getValue())) continue;
                 if (sd.getStartTime() == null || sd.getEndTime() == null) continue;
@@ -495,37 +475,44 @@ public class EmployeeScheduleService {
             }
 
             schedule.getDays().add(day);
-            System.out.println("✅ Día generado: " + currentDay + " (festivo: " + isHoliday + ")");
+            System.out.println("✅ Día generado: " + currentDay + " (festivo real: " + isHoliday + ", treatAsHoliday=" + treatAsHoliday + ")");
         }
 
         System.out.println("📊 Total días generados: " + schedule.getDays().size());
 
-        // ================= PERSISTIR EXENCIONES =================
-        // Guardar las exenciones explícitas en la tabla separada
+        // ====== GUARDAR EXENCIONES/DECISIONES ======
         if (holidayDecisions != null) {
             for (HolidayDecision h : holidayDecisions) {
-                if (h != null
-                        && h.getHolidayDate() != null
-                        && h.getExemptionReason() != null
-                        && !h.getExemptionReason().isBlank()) {
+                if (h != null && h.getHolidayDate() != null) {
                     try {
-                        holidayExemptionService.saveExemption(
-                                schedule.getEmployeeId(),
-                                h.getHolidayDate(),
-                                holidayService.getHolidayName(h.getHolidayDate()),
-                                h.getExemptionReason(),
-                                null
-                        );
-                        System.out.println("💾 Exención guardada: " + h.getHolidayDate() + " - " + h.getExemptionReason());
+                        if (h.getExemptionReason() != null && !h.getExemptionReason().isBlank()) {
+                            // Exención explícita - día omitido
+                            holidayExemptionService.saveExemption(
+                                    schedule.getEmployeeId(),
+                                    h.getHolidayDate(),
+                                    holidayService.getHolidayName(h.getHolidayDate()),
+                                    h.getExemptionReason(),
+                                    null
+                            );
+                            System.out.println("💾 Exención guardada (razón explícita): " + h.getHolidayDate() + " - " + h.getExemptionReason());
+                        } else if (!h.isApplyHolidayCharge()) {
+                            // 'No aplicar' → también registrar exención (sirve para tratarlos como REGULARES)
+                            holidayExemptionService.saveExemption(
+                                    schedule.getEmployeeId(),
+                                    h.getHolidayDate(),
+                                    holidayService.getHolidayName(h.getHolidayDate()),
+                                    "NO_APLICAR_RECARGO",
+                                    null
+                            );
+                            System.out.println("💾 Exención guardada (NO_APLICAR_RECARGO): " + h.getHolidayDate());
+                        }
                     } catch (Exception ex) {
-                        System.err.println("⚠️ No se pudo guardar la exención: " + ex.getMessage());
+                        System.err.println("⚠️ No se pudo guardar la exención/decisión: " + ex.getMessage());
                     }
                 }
             }
         }
     }
-
-
 
     // =================== VALIDACIONES / CONFLICTOS / FESTIVOS ===================
 
@@ -552,67 +539,29 @@ public class EmployeeScheduleService {
         Map<Long, List<ScheduleAssignment>> byEmp = assignments.stream()
                 .collect(Collectors.groupingBy(ScheduleAssignment::getEmployeeId));
 
-        System.out.println("🔍 VERIFICANDO CONFLICTOS PARA " + byEmp.size() + " EMPLEADOS:");
-
         for (Map.Entry<Long, List<ScheduleAssignment>> entry : byEmp.entrySet()) {
             Long employeeId = entry.getKey();
             List<ScheduleAssignment> empAssignments = entry.getValue();
 
-            System.out.println("\n👤 Empleado: " + employeeId);
-            System.out.println("  📋 Nuevas asignaciones: " + empAssignments.size());
-
             List<EmployeeSchedule> existing = employeeScheduleRepository.findByEmployeeId(employeeId);
-            System.out.println("  📚 Turnos existentes: " + existing.size());
-
-            if (!existing.isEmpty()) {
-                existing.forEach(es -> {
-                    System.out.println("    - ID: " + es.getId() +
-                            ", Fechas: " + es.getStartDate() + " al " + es.getEndDate() +
-                            ", Turno: " + (es.getShift() != null ? es.getShift().getName() : "null"));
-                });
-            }
 
             // 1) nuevos vs existentes
             for (ScheduleAssignment newAssignment : empAssignments) {
-                System.out.println("  🆕 Verificando nueva asignación: " +
-                        newAssignment.getStartDate() + " al " + newAssignment.getEndDate());
-
                 for (EmployeeSchedule existingSchedule : existing) {
                     ScheduleConflict conflict = checkForConflict(newAssignment, existingSchedule);
-                    if (conflict != null) {
-                        System.out.println("    ❌ CONFLICTO ENCONTRADO: " + conflict.getMessage());
-                        conflicts.add(conflict);
-                    } else {
-                        System.out.println("    ✅ Sin conflicto con turno existente ID: " + existingSchedule.getId());
-                    }
+                    if (conflict != null) conflicts.add(conflict);
                 }
             }
 
             // 2) nuevos entre sí
             for (int i = 0; i < empAssignments.size(); i++) {
                 for (int j = i + 1; j < empAssignments.size(); j++) {
-                    System.out.println("  🔄 Verificando conflicto entre nuevas asignaciones " + (i+1) + " y " + (j+1));
                     ScheduleConflict conflict = checkForConflictBetweenAssignments(
                             empAssignments.get(i), empAssignments.get(j));
-                    if (conflict != null) {
-                        System.out.println("    ❌ CONFLICTO ENTRE NUEVAS: " + conflict.getMessage());
-                        conflicts.add(conflict);
-                    } else {
-                        System.out.println("    ✅ Sin conflicto entre nuevas asignaciones");
-                    }
+                    if (conflict != null) conflicts.add(conflict);
                 }
             }
         }
-
-        System.out.println("\n📊 RESULTADO DETECCIÓN:");
-        if (!conflicts.isEmpty()) {
-            System.out.println("❌ TOTAL CONFLICTOS ENCONTRADOS: " + conflicts.size());
-            conflicts.forEach(c -> System.out.println("  - Employee " + c.getEmployeeId() +
-                    " en " + c.getConflictDate() + ": " + c.getMessage()));
-        } else {
-            System.out.println("✅ No se encontraron conflictos");
-        }
-
         return conflicts;
     }
 
@@ -624,16 +573,9 @@ public class EmployeeScheduleService {
         LocalDate existingStart = toLocalDate(existing.getStartDate());
         LocalDate existingEnd = (existing.getEndDate() != null) ? toLocalDate(existing.getEndDate()) : existingStart;
 
-        System.out.println("      🔍 Comparando fechas:");
-        System.out.println("        Nuevo: " + newStart + " al " + newEnd);
-        System.out.println("        Existente: " + existingStart + " al " + existingEnd);
-
         if (!datesOverlap(newStart, newEnd, existingStart, existingEnd)) {
-            System.out.println("        ✅ No hay solapamiento de fechas");
             return null;
         }
-
-        System.out.println("        ⚠️ FECHAS SE SOLAPAN - Verificando detalles...");
 
         Shifts newShift = shiftsRepository.findById(assignment.getShiftId()).orElse(null);
         Shifts existingShift = existing.getShift();
@@ -642,38 +584,22 @@ public class EmployeeScheduleService {
             return createConflict(assignment, newStart, "No se pudo verificar turnos");
         }
 
-        System.out.println("        📋 Turnos:");
-        System.out.println("          Nuevo: " + newShift.getName() + " (ID: " + newShift.getId() + ")");
-        System.out.println("          Existente: " + existingShift.getName() + " (ID: " + existingShift.getId() + ")");
-
         LocalDate overlapStart = Collections.max(Arrays.asList(newStart, existingStart));
         LocalDate overlapEnd = Collections.min(Arrays.asList(newEnd, existingEnd));
 
-        System.out.println("        📅 Período de solapamiento: " + overlapStart + " al " + overlapEnd);
-
         for (LocalDate date = overlapStart; !date.isAfter(overlapEnd); date = date.plusDays(1)) {
             int dayOfWeek = date.getDayOfWeek().getValue();
-            String dayName = getDayName(dayOfWeek);
-
-            System.out.println("          🗓️ " + dayName + " " + date + " (dow:" + dayOfWeek + ")");
 
             boolean newShiftHasThisDay = hasShiftActivityOnDay(newShift, dayOfWeek);
             boolean existingShiftHasThisDay = hasShiftActivityOnDay(existingShift, dayOfWeek);
 
-            System.out.println("            Turno nuevo activo: " + newShiftHasThisDay);
-            System.out.println("            Turno existente activo: " + existingShiftHasThisDay);
-
             if (newShiftHasThisDay && existingShiftHasThisDay) {
-                System.out.println("            ❌ CONFLICTO: Ambos turnos activos el mismo día");
                 return createConflict(assignment, date,
-                        "Conflicto de fechas el " + dayName + " " + date +
+                        "Conflicto de fechas el " + date +
                                 ": El empleado ya tiene un turno asignado para esta fecha");
-            } else {
-                System.out.println("            ✅ No hay conflicto este día");
             }
         }
 
-        System.out.println("        ✅ No se encontraron conflictos en el solapamiento");
         return null;
     }
 
@@ -681,50 +607,11 @@ public class EmployeeScheduleService {
         if (shift == null || shift.getShiftDetails() == null) {
             return false;
         }
-
         return shift.getShiftDetails().stream()
                 .anyMatch(detail -> detail.getDayOfWeek() != null &&
                         detail.getDayOfWeek().equals(dayOfWeek) &&
                         detail.getStartTime() != null &&
                         detail.getEndTime() != null);
-    }
-
-    private boolean hasTimeOverlap(Shifts shift1, Shifts shift2, int dayOfWeek) {
-        List<ShiftDetail> details1 = shift1.getShiftDetails().stream()
-                .filter(d -> d.getDayOfWeek() != null && d.getDayOfWeek().equals(dayOfWeek))
-                .collect(Collectors.toList());
-
-        List<ShiftDetail> details2 = shift2.getShiftDetails().stream()
-                .filter(d -> d.getDayOfWeek() != null && d.getDayOfWeek().equals(dayOfWeek))
-                .collect(Collectors.toList());
-
-        if (details1.isEmpty() || details2.isEmpty()) {
-            return false;
-        }
-
-        for (ShiftDetail d1 : details1) {
-            for (ShiftDetail d2 : details2) {
-                if (timePeriodsOverlap(d1.getStartTime(), d1.getEndTime(),
-                        d2.getStartTime(), d2.getEndTime())) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    private String getDayName(int dayOfWeek) {
-        switch (dayOfWeek) {
-            case 1: return "Lunes";
-            case 2: return "Martes";
-            case 3: return "Miércoles";
-            case 4: return "Jueves";
-            case 5: return "Viernes";
-            case 6: return "Sábado";
-            case 7: return "Domingo";
-            default: return "Día " + dayOfWeek;
-        }
     }
 
     private boolean timePeriodsOverlap(String start1, String end1, String start2, String end2) {
@@ -854,29 +741,11 @@ public class EmployeeScheduleService {
             throw new IllegalArgumentException("Employee ID debe ser un número válido.");
         }
 
-        System.out.println("🔍 Buscando schedules CON HORAS para employeeId: " + employeeId);
-
         List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(employeeId);
-
-        System.out.println("📋 Schedules encontrados en BD: " + schedules.size());
-        schedules.forEach(schedule -> {
-            System.out.println("   - Schedule ID: " + schedule.getId() +
-                    ", EmployeeId: " + schedule.getEmployeeId() +
-                    ", ShiftId: " + (schedule.getShift() != null ? schedule.getShift().getId() : "null") +
-                    ", ShiftName: " + (schedule.getShift() != null ? schedule.getShift().getName() : "null"));
-        });
 
         List<EmployeeScheduleDTO> result = schedules.stream()
                 .map(this::convertToDTOWithHours)
                 .collect(Collectors.toList());
-
-        System.out.println("✅ DTOs convertidos CON HORAS: " + result.size());
-        result.forEach(dto -> {
-            System.out.println("   - DTO ID: " + dto.getId() +
-                    ", NumberId: " + dto.getNumberId() +
-                    ", ShiftName: " + dto.getShiftName() +
-                    ", HoursInPeriod: " + dto.getHoursInPeriod());
-        });
 
         return result;
     }
@@ -929,9 +798,7 @@ public class EmployeeScheduleService {
         try {
             ScheduleDetailDTO detailWithHours = groupService.createScheduleDetailWithCalculation(schedule);
             dto.setHoursInPeriod(detailWithHours.getHoursInPeriod());
-            System.out.println("💰 Horas calculadas para schedule " + schedule.getId() + ": " + detailWithHours.getHoursInPeriod());
         } catch (Exception e) {
-            System.err.println("❌ Error calculando horas para schedule " + schedule.getId() + ": " + e.getMessage());
             dto.setHoursInPeriod(0.0);
         }
 

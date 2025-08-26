@@ -16,7 +16,7 @@ public class ScheduleAssignmentGroupDTO {
     private String periodEnd;     // "yyyy-MM-dd"
     private List<Long> employeeScheduleIds;  // IDs de los schedules agrupados
 
-    private BigDecimal totalHours;     // total programado (regulares + extras + festivos)
+    private BigDecimal totalHours;     // total efectivo (regular + extra) - SIN festivos
     private BigDecimal regularHours;   // horas regulares calculadas
 
     // HORAS NO FESTIVAS
