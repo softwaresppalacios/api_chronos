@@ -182,55 +182,108 @@ public class ScheduleAssignmentGroupService {
         final int nightStart = getNightStartMinutes();
         final int nightEnd = getNightEndMinutes();
 
-        log.info("🔍 PROCESANDO {} SCHEDULES INDIVIDUALES CON FESTIVOS", schedules.size());
+        log.info("🔍 PROCESANDO {} SCHEDULES INDIVIDUALES CON FESTIVOS (usando timeBlocks si existen)", schedules.size());
         log.info("🎉 Festivos conocidos globalmente: {}", holidayDates);
 
         for (EmployeeSchedule schedule : schedules) {
-            if (schedule.getShift() == null || schedule.getShift().getShiftDetails() == null) continue;
+            if (schedule.getShift() == null) continue;
 
             log.info("📋 Schedule ID: {} | Período: {} - {}",
                     schedule.getId(), schedule.getStartDate(), schedule.getEndDate());
 
-            // Usar días generados (si el día no fue creado por exención con razón, no aparece aquí)
+            // 1) Días a procesar (ya tienes este helper)
             List<LocalDate> datesToProcess = getDatesToProcess(schedule);
             int festivosEnEsteSchedule = 0;
 
             for (LocalDate date : datesToProcess) {
                 int dow = date.getDayOfWeek().getValue();
                 boolean esFestivo = holidayDates.contains(date);
-
                 if (esFestivo) {
                     festivosEnEsteSchedule++;
                     log.info("   🎉 FESTIVO DETECTADO EN TURNO: {} (dow: {})", date, dow);
                 }
 
-                for (ShiftDetail d : schedule.getShift().getShiftDetails()) {
-                    if (!Objects.equals(d.getDayOfWeek(), dow) ||
-                            d.getStartTime() == null || d.getEndTime() == null) continue;
+                // 2) Buscamos el EmployeeScheduleDay para esta fecha (si existen días generados)
+                var dayOpt = Optional.ofNullable(schedule.getDays())
+                        .orElseGet(Collections::emptyList)
+                        .stream()
+                        .filter(d -> {
+                            LocalDate dDate;
+                            var raw = d.getDate();
+                            if (raw instanceof java.sql.Date) {
+                                dDate = ((java.sql.Date) raw).toLocalDate();
+                            } else {
+                                dDate = raw.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+                            }
+                            return dDate.equals(date);
+                        })
+                        .findFirst();
 
-                    TimeUtils.DayNightSplit split = TimeUtils.splitDayNight(
-                            d.getStartTime(), d.getEndTime(), nightStart, nightEnd);
+                boolean anyBlockProcessed = false;
 
-                    if (split.dayMinutes > 0) {
-                        HourDetail hd = new HourDetail();
-                        hd.date = date;
-                        hd.dayOfWeek = dow;
-                        hd.segmentMinutes = split.dayMinutes;
-                        hd.isNightSegment = false;
-                        hd.isSunday = (dow == 7);
-                        hd.isHoliday = shouldTreatAsHoliday(date, schedule, esFestivo);
-                        all.add(hd);
+                if (dayOpt.isPresent() && dayOpt.get().getTimeBlocks() != null && !dayOpt.get().getTimeBlocks().isEmpty()) {
+                    // 3) ✅ PRIORIDAD: usar los bloques reales del día (respetan overrides del modal)
+                    for (var tb : dayOpt.get().getTimeBlocks()) {
+                        String start = TimeUtils.normalizeTimeFormat(tb.getStartTime().toString()); // HH:mm:ss
+                        String end   = TimeUtils.normalizeTimeFormat(tb.getEndTime().toString());   // HH:mm:ss
+
+                        TimeUtils.DayNightSplit split = TimeUtils.splitDayNight(start, end, nightStart, nightEnd);
+
+                        if (split.dayMinutes > 0) {
+                            HourDetail hd = new HourDetail();
+                            hd.date = date;
+                            hd.dayOfWeek = dow;
+                            hd.segmentMinutes = split.dayMinutes;
+                            hd.isNightSegment = false;
+                            hd.isSunday = (dow == 7);
+                            hd.isHoliday = shouldTreatAsHoliday(date, schedule, esFestivo);
+                            all.add(hd);
+                        }
+                        if (split.nightMinutes > 0) {
+                            HourDetail hn = new HourDetail();
+                            hn.date = date;
+                            hn.dayOfWeek = dow;
+                            hn.segmentMinutes = split.nightMinutes;
+                            hn.isNightSegment = true;
+                            hn.isSunday = (dow == 7);
+                            hn.isHoliday = shouldTreatAsHoliday(date, schedule, esFestivo);
+                            all.add(hn);
+                        }
                     }
+                    anyBlockProcessed = true;
+                }
 
-                    if (split.nightMinutes > 0) {
-                        HourDetail hn = new HourDetail();
-                        hn.date = date;
-                        hn.dayOfWeek = dow;
-                        hn.segmentMinutes = split.nightMinutes;
-                        hn.isNightSegment = true;
-                        hn.isSunday = (dow == 7);
-                        hn.isHoliday = shouldTreatAsHoliday(date, schedule, esFestivo);
-                        all.add(hn);
+                if (!anyBlockProcessed) {
+                    // 4) 🔁 FALLBACK: no hay timeBlocks para ese día -> usamos ShiftDetail (comportamiento anterior)
+                    if (schedule.getShift().getShiftDetails() == null) continue;
+
+                    for (ShiftDetail d : schedule.getShift().getShiftDetails()) {
+                        if (!Objects.equals(d.getDayOfWeek(), dow) ||
+                                d.getStartTime() == null || d.getEndTime() == null) continue;
+
+                        TimeUtils.DayNightSplit split = TimeUtils.splitDayNight(
+                                d.getStartTime(), d.getEndTime(), nightStart, nightEnd);
+
+                        if (split.dayMinutes > 0) {
+                            HourDetail hd = new HourDetail();
+                            hd.date = date;
+                            hd.dayOfWeek = dow;
+                            hd.segmentMinutes = split.dayMinutes;
+                            hd.isNightSegment = false;
+                            hd.isSunday = (dow == 7);
+                            hd.isHoliday = shouldTreatAsHoliday(date, schedule, esFestivo);
+                            all.add(hd);
+                        }
+                        if (split.nightMinutes > 0) {
+                            HourDetail hn = new HourDetail();
+                            hn.date = date;
+                            hn.dayOfWeek = dow;
+                            hn.segmentMinutes = split.nightMinutes;
+                            hn.isNightSegment = true;
+                            hn.isSunday = (dow == 7);
+                            hn.isHoliday = shouldTreatAsHoliday(date, schedule, esFestivo);
+                            all.add(hn);
+                        }
                     }
                 }
             }
@@ -245,6 +298,7 @@ public class ScheduleAssignmentGroupService {
 
         return all;
     }
+
 
     private boolean shouldTreatAsHoliday(LocalDate date, EmployeeSchedule schedule, boolean isHoliday) {
         if (!isHoliday) return false;

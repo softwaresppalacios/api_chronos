@@ -1,26 +1,16 @@
 package sp.sistemaspalacios.api_chronos.service.employeeSchedule;
 
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.AssignmentRequest;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.AssignmentResult;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.ConfirmedAssignment;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.ConflictException;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.HolidayConfirmationRequest;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.HolidayDecision;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.HolidayWarning;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.ScheduleAssignment;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.ScheduleConflict;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.ValidationException;
-import sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.ValidationResult;
 import sp.sistemaspalacios.api_chronos.dto.EmployeeResponse;
 import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
 import sp.sistemaspalacios.api_chronos.dto.ScheduleAssignmentGroupDTO;
 import sp.sistemaspalacios.api_chronos.dto.ScheduleDetailDTO;
+import sp.sistemaspalacios.api_chronos.dto.ScheduleDto.*;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleTimeBlock;
@@ -32,15 +22,13 @@ import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeSched
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 import sp.sistemaspalacios.api_chronos.service.boundaries.generalConfiguration.GeneralConfigurationService;
 import sp.sistemaspalacios.api_chronos.service.boundaries.holiday.HolidayService;
-
+import sp.sistemaspalacios.api_chronos.dto.ScheduleDto.ShiftSegmentDetail;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.sql.Time;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -166,14 +154,14 @@ public class EmployeeScheduleService {
         }
 
         // 5) Resumen final
-        List<sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.EmployeeHoursSummary> summaries =
+        List<EmployeeHoursSummary> summaries =
                 idsPorEmpleado.keySet().stream()
                         .map(empId -> {
                             try {
                                 return calculateEmployeeHoursSummary(empId);
                             } catch (Exception ex) {
                                 System.err.println("❌ Error calculando resumen para employee " + empId + ": " + ex.getMessage());
-                                var empty = new sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.EmployeeHoursSummary();
+                                var empty = new EmployeeHoursSummary();
                                 empty.setEmployeeId(empId);
                                 empty.setTotalHours(0.0);
                                 empty.setAssignedHours(0.0);
@@ -230,7 +218,7 @@ public class EmployeeScheduleService {
         }
 
         // Resumen
-        List<sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.EmployeeHoursSummary> summaries =
+        List<EmployeeHoursSummary> summaries =
                 idsPorEmpleado.keySet().stream()
                         .map(this::calculateEmployeeHoursSummary)
                         .collect(Collectors.toList());
@@ -246,12 +234,11 @@ public class EmployeeScheduleService {
 
     // =================== RESUMEN DE HORAS ===================
 
-    public sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.EmployeeHoursSummary
-    calculateEmployeeHoursSummary(Long employeeId) {
+    public EmployeeHoursSummary calculateEmployeeHoursSummary(Long employeeId) {
 
         List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(employeeId);
 
-        var s = new sp.sistemaspalacios.api_chronos.controller.employeeSchedule.EmployeeScheduleController.EmployeeHoursSummary();
+        var s = new EmployeeHoursSummary();
         s.setEmployeeId(employeeId);
 
         if (groups == null || groups.isEmpty()) {
@@ -275,7 +262,6 @@ public class EmployeeScheduleService {
             if (g.getRegularHours() != null) regular = regular.add(g.getRegularHours());
             if (g.getOvertimeHours() != null) extra   = extra.add(g.getOvertimeHours());
             if (g.getFestivoHours() != null)  festivo = festivo.add(g.getFestivoHours());
-
 
             if (g.getOvertimeBreakdown() != null) {
                 for (Map.Entry<String, Object> e : g.getOvertimeBreakdown().entrySet()) {
@@ -326,7 +312,6 @@ public class EmployeeScheduleService {
         s.setOvertimeBreakdown(bd);
         return s;
     }
-
 
     // =================== VALIDAR SIN GUARDAR ===================
 
@@ -414,56 +399,79 @@ public class EmployeeScheduleService {
                 ? schedule.getShift().getShiftDetails()
                 : Collections.emptyList();
 
-        // ====== MAPA DE DECISIONES ======
+        // Mapear decisiones por fecha
         Map<LocalDate, HolidayDecision> decisionMap = (holidayDecisions != null ? holidayDecisions : Collections.<HolidayDecision>emptyList())
                 .stream()
                 .filter(Objects::nonNull)
                 .filter(h -> h.getHolidayDate() != null)
-                .collect(Collectors.toMap(HolidayDecision::getHolidayDate, h -> h));
+                .collect(Collectors.toMap(HolidayDecision::getHolidayDate, h -> h, (a,b) -> a));
 
-        // ⛔ OMITIR SOLO cuando hay razón explícita (exención real)
+        // Omitir día SOLO cuando hay motivo de exención (día NO trabajado + razón)
         Set<LocalDate> exemptDates = decisionMap.entrySet().stream()
-                .filter(entry -> {
-                    HolidayDecision v = entry.getValue();
+                .filter(e -> {
+                    HolidayDecision v = e.getValue();
                     boolean hasReason = v.getExemptionReason() != null && !v.getExemptionReason().isBlank();
-                    return hasReason; // <<-- “No aplicar recargo” NO se omite
+                    boolean noTrabaja = (v.isApplyHolidayCharge() == false);
+                    return hasReason && noTrabaja;
                 })
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toSet());
 
-        System.out.println("🎯 GENERACIÓN CON DECISIONES:");
-        System.out.println("   📅 Período: " + startDate + " al " + endDate);
-        System.out.println("   ⛔ Días OMITIDOS (solo exención con razón): " + exemptDates);
-        System.out.println("   📋 Decisiones totales: " + decisionMap.size());
-
         for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
-            final LocalDate currentDay = d;
 
-            // Omitir solo si exento con razón
-            if (exemptDates.contains(currentDay)) {
-                System.out.println("⛔ Día omitido (exención con razón): " + currentDay);
+            // Saltar si exento explícito
+            if (exemptDates.contains(d)) {
                 continue;
             }
 
-            boolean isHoliday = holidayService.isHoliday(currentDay);
-            HolidayDecision decision = decisionMap.get(currentDay);
-            boolean treatAsHoliday = isHoliday && (decision == null || decision.isApplyHolidayCharge());
+            HolidayDecision decision = decisionMap.get(d);
 
             EmployeeScheduleDay day = new EmployeeScheduleDay();
             day.setEmployeeSchedule(schedule);
-            day.setDate(java.sql.Date.valueOf(currentDay));
-            day.setDayOfWeek(currentDay.getDayOfWeek().getValue());
+            day.setDate(java.sql.Date.valueOf(d));
+            day.setDayOfWeek(d.getDayOfWeek().getValue());
             day.setCreatedAt(new Date());
             day.setTimeBlocks(new ArrayList<>());
 
+            // para cada detalle del turno que coincida con el DOW, creamos bloque
             for (ShiftDetail sd : details) {
-                if (sd.getDayOfWeek() == null || !Objects.equals(sd.getDayOfWeek(), currentDay.getDayOfWeek().getValue())) continue;
+                if (sd.getDayOfWeek() == null || !Objects.equals(sd.getDayOfWeek(), d.getDayOfWeek().getValue())) continue;
                 if (sd.getStartTime() == null || sd.getEndTime() == null) continue;
 
-                String sStr = sd.getStartTime().contains(":") && sd.getStartTime().split(":").length == 2
-                        ? sd.getStartTime() + ":00" : sd.getStartTime();
-                String eStr = sd.getEndTime().contains(":") && sd.getEndTime().split(":").length == 2
-                        ? sd.getEndTime() + ":00" : sd.getEndTime();
+                // Valores por defecto (del turno)
+                String finalStartTime = sd.getStartTime();
+                String finalEndTime   = sd.getEndTime();
+                String finalBreakStartTime = sd.getBreakStartTime();
+                String finalBreakEndTime   = sd.getBreakEndTime();
+
+                // Si hay decisión y segmentos desde el front, buscar el segmento que coincide por "segmentName"
+                if (decision != null && decision.getShiftSegments() != null) {
+                    for (Object segmentObj : decision.getShiftSegments()) {
+                        if (!(segmentObj instanceof Map)) continue;
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> seg = (Map<String, Object>) segmentObj;
+
+                        String segName = stringOf(seg.get("segmentName"));
+                        String expected = determineSegmentName(sd.getStartTime()); // "Mañana"/"Tarde"/"Noche"
+
+                        if (equalsIgnoreCaseNoAccents(segName, expected)) {
+                            String s  = stringOf(seg.get("startTime"));       // => "HH:mm:ss"
+                            String e  = stringOf(seg.get("endTime"));
+                            String bs = stringOf(seg.get("breakStartTime"));
+                            String be = stringOf(seg.get("breakEndTime"));
+
+                            if (!isBlank(s))  finalStartTime = s;
+                            if (!isBlank(e))  finalEndTime   = e;
+                            if (!isBlank(bs)) finalBreakStartTime = bs;
+                            if (!isBlank(be)) finalBreakEndTime   = be;
+                            break;
+                        }
+                    }
+                }
+
+                // Normalizar a HH:mm:ss
+                String sStr = normalizeTimeForDatabase(finalStartTime);
+                String eStr = normalizeTimeForDatabase(finalEndTime);
 
                 EmployeeScheduleTimeBlock tb = new EmployeeScheduleTimeBlock();
                 tb.setEmployeeScheduleDay(day);
@@ -475,43 +483,74 @@ public class EmployeeScheduleService {
             }
 
             schedule.getDays().add(day);
-            System.out.println("✅ Día generado: " + currentDay + " (festivo real: " + isHoliday + ", treatAsHoliday=" + treatAsHoliday + ")");
-        }
 
-        System.out.println("📊 Total días generados: " + schedule.getDays().size());
-
-        // ====== GUARDAR EXENCIONES/DECISIONES ======
-        if (holidayDecisions != null) {
-            for (HolidayDecision h : holidayDecisions) {
-                if (h != null && h.getHolidayDate() != null) {
-                    try {
-                        if (h.getExemptionReason() != null && !h.getExemptionReason().isBlank()) {
-                            // Exención explícita - día omitido
-                            holidayExemptionService.saveExemption(
-                                    schedule.getEmployeeId(),
-                                    h.getHolidayDate(),
-                                    holidayService.getHolidayName(h.getHolidayDate()),
-                                    h.getExemptionReason(),
-                                    null
-                            );
-                            System.out.println("💾 Exención guardada (razón explícita): " + h.getHolidayDate() + " - " + h.getExemptionReason());
-                        } else if (!h.isApplyHolidayCharge()) {
-                            // 'No aplicar' → también registrar exención (sirve para tratarlos como REGULARES)
-                            holidayExemptionService.saveExemption(
-                                    schedule.getEmployeeId(),
-                                    h.getHolidayDate(),
-                                    holidayService.getHolidayName(h.getHolidayDate()),
-                                    "NO_APLICAR_RECARGO",
-                                    null
-                            );
-                            System.out.println("💾 Exención guardada (NO_APLICAR_RECARGO): " + h.getHolidayDate());
-                        }
-                    } catch (Exception ex) {
-                        System.err.println("⚠️ No se pudo guardar la exención/decisión: " + ex.getMessage());
+            // Guardar exenciones/decisiones para trazabilidad:
+            if (decision != null) {
+                try {
+                    if (decision.getExemptionReason() != null && !decision.getExemptionReason().isBlank()) {
+                        // Exención real (no trabajar) ya la omitimos arriba
+                        holidayExemptionService.saveExemption(
+                                schedule.getEmployeeId(),
+                                d,
+                                holidayService.getHolidayName(d),
+                                decision.getExemptionReason(),
+                                null
+                        );
+                    } else if (decision.isApplyHolidayCharge() == false) {
+                        // No aplicar recargo (trabajo REGULAR sin recargo) → registro como NO_APLICAR_RECARGO
+                        holidayExemptionService.saveExemption(
+                                schedule.getEmployeeId(),
+                                d,
+                                holidayService.getHolidayName(d),
+                                "NO_APLICAR_RECARGO",
+                                null
+                        );
                     }
+                } catch (Exception ignore) {
+                    // No detengas el flujo por logs
                 }
             }
         }
+    }
+
+
+    // NUEVOS MÉTODOS HELPER PARA MANEJAR SEGMENTOS
+
+    private boolean segmentMatchesShiftDetail(Object segment, ShiftDetail sd) {
+        try {
+            // Usar reflexión para obtener el segmentName del objeto
+            java.lang.reflect.Method getSegmentName = segment.getClass().getMethod("getSegmentName");
+            String segmentName = (String) getSegmentName.invoke(segment);
+
+            if (segmentName == null) return false;
+
+            // Normalizar nombres
+            String normalizedSegment = segmentName.toLowerCase().trim();
+
+            // Determinar el nombre esperado basado en la hora de inicio del ShiftDetail
+            String expectedName = determineSegmentName(sd.getStartTime()).toLowerCase().trim();
+
+            return normalizedSegment.equals(expectedName);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String getSegmentProperty(Object segment, String methodName) {
+        try {
+            java.lang.reflect.Method method = segment.getClass().getMethod(methodName);
+            Object result = method.invoke(segment);
+            return result != null ? result.toString() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String normalizeTimeForDatabase(String time) {
+        if (time == null) return "00:00:00";
+        if (time.split(":").length == 3) return time;        // HH:mm:ss
+        if (time.split(":").length == 2) return time + ":00"; // HH:mm
+        return time + ":00:00";                               // HH
     }
 
     // =================== VALIDACIONES / CONFLICTOS / FESTIVOS ===================
@@ -700,23 +739,138 @@ public class EmployeeScheduleService {
 
     private List<HolidayWarning> detectHolidayWarnings(List<ScheduleAssignment> assignments) {
         List<HolidayWarning> warnings = new ArrayList<>();
-        for (ScheduleAssignment a : assignments) {
-            LocalDate start = a.getStartDate();
-            LocalDate end = (a.getEndDate() != null) ? a.getEndDate() : start;
+
+        for (ScheduleAssignment assignment : assignments) {
+            LocalDate start = assignment.getStartDate();
+            LocalDate end = (assignment.getEndDate() != null) ? assignment.getEndDate() : start;
+
+            Shifts shift = shiftsRepository.findById(assignment.getShiftId()).orElse(null);
+            if (shift == null || shift.getShiftDetails() == null) continue;
+
+            String employeeName = getEmployeeName(assignment.getEmployeeId());
 
             for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
                 if (holidayService.isHoliday(d)) {
-                    HolidayWarning w = new HolidayWarning();
-                    w.setEmployeeId(a.getEmployeeId());
-                    w.setHolidayDate(d);
-                    w.setHolidayName(holidayService.getHolidayName(d));
-                    w.setRequiresConfirmation(true);
-                    warnings.add(w);
+                    HolidayWarning warning = new HolidayWarning();
+                    warning.setEmployeeId(assignment.getEmployeeId());
+                    warning.setEmployeeName(employeeName);
+                    warning.setHolidayDate(d);
+                    warning.setHolidayName(holidayService.getHolidayName(d));
+
+                    List<ShiftSegmentDetail> segments = calculateShiftSegmentsForDay(shift, d);
+                    warning.setShiftSegments(segments);
+
+                    warning.setRequiresConfirmation(true);
+                    warnings.add(warning);
                 }
             }
         }
         return warnings;
     }
+
+    // =================== MÉTODOS AUXILIARES PARA CALCULAR SEGMENTOS ===================
+
+    // Método auxiliar para obtener nombre del empleado
+    private String getEmployeeName(Long employeeId) {
+        try {
+            EmployeeResponse response = getEmployeeData(employeeId);
+            if (response != null && response.getEmployee() != null) {
+                EmployeeResponse.Employee emp = response.getEmployee();
+                return String.join(" ",
+                        Arrays.stream(new String[]{emp.getFirstName(), emp.getSecondName(), emp.getSurName(), emp.getSecondSurname()})
+                                .filter(Objects::nonNull)
+                                .filter(s -> !s.isEmpty())
+                                .toArray(String[]::new)
+                );
+            }
+        } catch (Exception ignore) {}
+        return "Empleado " + employeeId;
+    }
+
+    // Método para calcular los segmentos del turno
+    private List<ShiftSegmentDetail> calculateShiftSegmentsForDay(Shifts shift, LocalDate date) {
+        List<ShiftSegmentDetail> segments = new ArrayList<>();
+        int dayOfWeek = date.getDayOfWeek().getValue();
+
+        List<ShiftDetail> dayDetails = shift.getShiftDetails().stream()
+                .filter(detail -> detail.getDayOfWeek() != null && detail.getDayOfWeek().equals(dayOfWeek))
+                .filter(detail -> detail.getStartTime() != null && detail.getEndTime() != null)
+                .collect(Collectors.toList());
+
+        for (ShiftDetail detail : dayDetails) {
+            ShiftSegmentDetail segment = new ShiftSegmentDetail();
+
+            segment.setSegmentName(determineSegmentName(detail.getStartTime()));
+            segment.setStartTime(normalizeTimeForDatabase(detail.getStartTime()));
+            segment.setEndTime(normalizeTimeForDatabase(detail.getEndTime()));
+
+            if (detail.getBreakStartTime() != null) {
+                segment.setBreakStartTime(normalizeTimeForDatabase(detail.getBreakStartTime()));
+            }
+            if (detail.getBreakEndTime() != null) {
+                segment.setBreakEndTime(normalizeTimeForDatabase(detail.getBreakEndTime()));
+            }
+            segment.setBreakMinutes(detail.getBreakMinutes());
+
+            double workingHours = calculateHoursBetween(segment.getStartTime(), segment.getEndTime());
+            segment.setWorkingHours(workingHours);
+
+            double breakHours = (segment.getBreakMinutes() != null) ? segment.getBreakMinutes() / 60.0 : 0.0;
+            segment.setBreakHours(breakHours);
+            segment.setEffectiveHours(Math.max(0.0, workingHours - breakHours));
+
+            segments.add(segment);
+        }
+
+        return segments;
+    }
+
+
+
+    private static String stringOf(Object o){ return o==null? null : o.toString(); }
+    private static boolean isBlank(String s){ return s==null || s.trim().isEmpty(); }
+
+    private static boolean equalsIgnoreCaseNoAccents(String a, String b){
+        if (a==null || b==null) return false;
+        return normalize(a).equals(normalize(b));
+    }
+    private static String normalize(String s){
+        return java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}","").toLowerCase().trim();
+    }
+
+
+
+
+
+    private double calculateHoursBetween(String startTime, String endTime) {
+        try {
+            String[] sParts = normalizeTimeForDatabase(startTime).split(":");
+            String[] eParts = normalizeTimeForDatabase(endTime).split(":");
+            int s = Integer.parseInt(sParts[0]) * 60 + Integer.parseInt(sParts[1]);
+            int e = Integer.parseInt(eParts[0]) * 60 + Integer.parseInt(eParts[1]);
+
+            int minutes = (e >= s) ? (e - s) : (1440 - s + e);
+            return minutes / 60.0;
+        } catch (Exception e) {
+            return 0.0;
+        }
+    }
+
+    // Determinar el nombre del segmento según la hora
+    private String determineSegmentName(String startTime) {
+        try {
+            int hour = Integer.parseInt(startTime.split(":")[0]);
+            if (hour >= 6 && hour < 14) return "Mañana";
+            if (hour >= 14 && hour < 20) return "Tarde";
+            return "Noche";
+        } catch (Exception e) {
+            return "Turno";
+        }
+    }
+
+    // Calcular horas entre dos horarios
+
 
     private boolean datesOverlap(LocalDate s1, LocalDate e1, LocalDate s2, LocalDate e2) {
         return !s1.isAfter(e2) && !s2.isAfter(e1);
