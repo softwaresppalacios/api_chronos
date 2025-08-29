@@ -4,7 +4,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.dto.ShiftDetailDTO;
 import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
-import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.service.shift.ShiftDetailService;
 
 import java.util.HashMap;
@@ -48,62 +47,114 @@ public class ShiftDetailController {
     }
 
     @PostMapping
-    public ResponseEntity<?> createShiftDetail(@RequestBody ShiftDetail shiftDetail) {
+    public ResponseEntity<Map<String, Object>> createShiftDetail(@RequestBody ShiftDetail shiftDetail) {
         try {
-            ShiftDetail processedEntity = processShiftDetailEntity(shiftDetail);
-            ShiftDetail created = shiftDetailService.createShiftDetail(processedEntity);
-            ShiftDetailDTO responseDTO = convertToDTO(created);
+            // Validación inicial mínima solo para evitar NPE
+            performBasicNullChecks(shiftDetail);
 
+            // El servicio hará TODA la validación real
+            ShiftDetail created = shiftDetailService.createShiftDetail(shiftDetail);
+            ShiftDetailDTO responseDTO = convertToDTO(created);
             Map<String, Object> hoursSummary = shiftDetailService.getWeeklyHoursSummary(created.getShift().getId());
 
             Map<String, Object> response = new HashMap<>();
             response.put("message", "Detalle de turno creado exitosamente");
             response.put("shiftDetail", responseDTO);
             response.put("hoursSummary", hoursSummary);
+            response.put("success", true);
 
             return ResponseEntity.ok(response);
 
         } catch (IllegalArgumentException e) {
-            return handleError(e.getMessage());
+            return ResponseEntity.badRequest().body(createValidationErrorResponse(e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(createConfigurationErrorResponse(e.getMessage()));
         } catch (Exception e) {
-            return handleError("Error interno: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(createInternalErrorResponse(e.getMessage()));
         }
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<?> updateShiftDetail(@PathVariable Long id, @RequestBody ShiftDetail shiftDetail) {
+    public ResponseEntity<Map<String, Object>> updateShiftDetail(@PathVariable Long id, @RequestBody ShiftDetail shiftDetail) {
         try {
-            ShiftDetail processedEntity = processShiftDetailEntity(shiftDetail);
-            ShiftDetail updated = shiftDetailService.updateShiftDetail(id, processedEntity);
-            ShiftDetailDTO responseDTO = convertToDTO(updated);
+            // Validación inicial mínima solo para evitar NPE
+            performBasicNullChecks(shiftDetail);
 
+            // El servicio hará TODA la validación real
+            ShiftDetail updated = shiftDetailService.updateShiftDetail(id, shiftDetail);
+            ShiftDetailDTO responseDTO = convertToDTO(updated);
             Map<String, Object> hoursSummary = shiftDetailService.getWeeklyHoursSummary(updated.getShift().getId());
 
             Map<String, Object> response = new HashMap<>();
             response.put("message", "Detalle de turno actualizado exitosamente");
             response.put("shiftDetail", responseDTO);
             response.put("hoursSummary", hoursSummary);
+            response.put("success", true);
 
             return ResponseEntity.ok(response);
 
         } catch (IllegalArgumentException e) {
-            return handleError(e.getMessage());
+            return ResponseEntity.badRequest().body(createValidationErrorResponse(e.getMessage()));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(createConfigurationErrorResponse(e.getMessage()));
         } catch (Exception e) {
-            return handleError("Error interno: " + e.getMessage());
+            return ResponseEntity.internalServerError().body(createInternalErrorResponse(e.getMessage()));
         }
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<?> deleteShiftDetail(@PathVariable Long id) {
+    public ResponseEntity<Map<String, String>> deleteShiftDetail(@PathVariable Long id) {
         try {
             shiftDetailService.deleteShiftDetail(id);
             Map<String, String> response = new HashMap<>();
             response.put("message", "Detalle de turno eliminado exitosamente");
+            response.put("success", "true");
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
-            return handleError(e.getMessage());
+            return ResponseEntity.badRequest().body(createSimpleErrorResponse(e.getMessage()));
         }
     }
+
+    @GetMapping("/break-info")
+    public ResponseEntity<Map<String, Object>> getBreakInfo() {
+        try {
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Para obtener la configuración de break, use /api/config/BREAK");
+            response.put("breakConfigEndpoint", "/api/config/BREAK");
+            response.put("success", true);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(createInternalErrorResponse("Error obteniendo información de break: " + e.getMessage()));
+        }
+    }
+
+    // ==========================================
+    // MÉTODOS PRIVADOS - VALIDACIÓN BÁSICA
+    // ==========================================
+
+    /**
+     * Validaciones mínimas para evitar NullPointerException
+     * El backend nunca debe crash por datos null del frontend
+     */
+    private void performBasicNullChecks(ShiftDetail shiftDetail) {
+        if (shiftDetail == null) {
+            throw new IllegalArgumentException("Los datos del turno son obligatorios");
+        }
+
+        if (shiftDetail.getShift() == null) {
+            throw new IllegalArgumentException("La referencia al turno es obligatoria");
+        }
+
+        if (shiftDetail.getShift().getId() == null) {
+            throw new IllegalArgumentException("El ID del turno es obligatorio");
+        }
+
+        // No validar más aquí - eso lo hace el service con el validator completo
+    }
+
+    // ==========================================
+    // MÉTODOS PRIVADOS - CONVERSIÓN DTO
+    // ==========================================
 
     private ShiftDetailDTO convertToDTO(ShiftDetail entity) {
         return new ShiftDetailDTO(
@@ -121,45 +172,53 @@ public class ShiftDetailController {
         );
     }
 
-    private ShiftDetail convertToEntity(ShiftDetailDTO dto) {
-        ShiftDetail entity = new ShiftDetail();
-        entity.setId(dto.getId());
-        entity.setDayOfWeek(dto.getDayOfWeek());
-        entity.setStartTime(dto.getStartTime());
-        entity.setEndTime(dto.getEndTime());
-        entity.setBreakStartTime(dto.getBreakStartTime());
-        entity.setBreakEndTime(dto.getBreakEndTime());
+    // ==========================================
+    // MÉTODOS PRIVADOS - RESPUESTAS DE ERROR ESPECÍFICAS
+    // ==========================================
 
-        if (dto.getShiftId() != null) {
-            Shifts shift = new Shifts();
-            shift.setId(dto.getShiftId());
-            entity.setShift(shift);
-        }
-        return entity;
-    }
-
-    private ShiftDetail processShiftDetailEntity(ShiftDetail shiftDetail) {
-        if (shiftDetail.getShift() != null && shiftDetail.getShift().getId() != null) {
-            return shiftDetail;
-        }
-        throw new IllegalArgumentException("El turno (Shift) es obligatorio y debe tener un ID válido.");
-    }
-
-    private ResponseEntity<Map<String, String>> handleError(String message) {
-        Map<String, String> response = new HashMap<>();
+    /**
+     * Error de validación de datos (cliente envió datos incorrectos)
+     */
+    private Map<String, Object> createValidationErrorResponse(String message) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", false);
+        response.put("errorType", "VALIDATION_ERROR");
         response.put("error", message);
-        return ResponseEntity.badRequest().body(response);
+        response.put("message", "Los datos enviados no cumplen las reglas de negocio");
+        return response;
     }
 
-    @GetMapping("/break-info")
-    public ResponseEntity<?> getBreakInfo() {
-        try {
-            Map<String, Object> response = new HashMap<>();
-            response.put("message", "Para obtener la configuración de break, use /api/config/BREAK");
-            response.put("breakConfigEndpoint", "/api/config/BREAK");
-            return ResponseEntity.ok(response);
-        } catch (Exception e) {
-            return handleError("Error obteniendo información de break: " + e.getMessage());
-        }
+    /**
+     * Error de configuración del sistema (problema del servidor)
+     */
+    private Map<String, Object> createConfigurationErrorResponse(String message) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", false);
+        response.put("errorType", "CONFIGURATION_ERROR");
+        response.put("error", message);
+        response.put("message", "Error en la configuración del sistema");
+        return response;
+    }
+
+    /**
+     * Error interno del servidor
+     */
+    private Map<String, Object> createInternalErrorResponse(String message) {
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", false);
+        response.put("errorType", "INTERNAL_ERROR");
+        response.put("error", message);
+        response.put("message", "Error interno del servidor");
+        return response;
+    }
+
+    /**
+     * Error simple para métodos que retornan Map<String, String>
+     */
+    private Map<String, String> createSimpleErrorResponse(String message) {
+        Map<String, String> response = new HashMap<>();
+        response.put("success", "false");
+        response.put("error", message);
+        return response;
     }
 }
