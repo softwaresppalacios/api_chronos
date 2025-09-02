@@ -236,12 +236,16 @@ public class EmployeeScheduleService {
 
     public EmployeeHoursSummary calculateEmployeeHoursSummary(Long employeeId) {
 
-        List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(employeeId);
+        // ⬇️ Filtrar aquí SOLO los grupos ACTIVE
+        List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(employeeId)
+                .stream()
+                .filter(g -> "ACTIVE".equalsIgnoreCase(g.getStatus()))
+                .collect(Collectors.toList());
 
         var s = new EmployeeHoursSummary();
         s.setEmployeeId(employeeId);
 
-        if (groups == null || groups.isEmpty()) {
+        if (groups.isEmpty()) {
             s.setTotalHours(0.0);
             s.setAssignedHours(0.0);
             s.setOvertimeHours(0.0);
@@ -265,11 +269,9 @@ public class EmployeeScheduleService {
 
             if (g.getOvertimeBreakdown() != null) {
                 for (Map.Entry<String, Object> e : g.getOvertimeBreakdown().entrySet()) {
-                    String code = e.getKey();
-                    Object v = e.getValue();
-                    if (!(v instanceof Number)) continue;
-                    BigDecimal add = BigDecimal.valueOf(((Number) v).doubleValue());
-                    breakdownSum.put(code, breakdownSum.getOrDefault(code, BigDecimal.ZERO).add(add));
+                    if (e.getValue() instanceof Number n) {
+                        breakdownSum.merge(e.getKey(), BigDecimal.valueOf(n.doubleValue()), BigDecimal::add);
+                    }
                 }
             }
         }
@@ -288,13 +290,9 @@ public class EmployeeScheduleService {
             if (hours == null || hours.signum() <= 0) continue;
 
             if (code.startsWith("EXTRA_") || code.contains("DOMINICAL")) {
-                if (hours.compareTo(maxExtra) > 0) {
-                    maxExtra = hours; predominantExtra = code;
-                }
+                if (hours.compareTo(maxExtra) > 0) { maxExtra = hours; predominantExtra = code; }
             } else if (code.startsWith("FESTIVO_")) {
-                if (hours.compareTo(maxFestivo) > 0) {
-                    maxFestivo = hours; predominantFestivo = code;
-                }
+                if (hours.compareTo(maxFestivo) > 0) { maxFestivo = hours; predominantFestivo = code; }
             }
         }
 
@@ -306,12 +304,11 @@ public class EmployeeScheduleService {
         s.setFestivoType(predominantFestivo);
 
         Map<String, Object> bd = new HashMap<>();
-        for (Map.Entry<String, BigDecimal> e : breakdownSum.entrySet()) {
-            bd.put(e.getKey(), e.getValue().doubleValue());
-        }
+        breakdownSum.forEach((k, v) -> bd.put(k, v.doubleValue()));
         s.setOvertimeBreakdown(bd);
         return s;
     }
+
 
     // =================== VALIDAR SIN GUARDAR ===================
 
@@ -572,8 +569,11 @@ public class EmployeeScheduleService {
         if (!errors.isEmpty()) throw new ValidationException("Errores de validación", errors);
     }
 
+
     private List<ScheduleConflict> detectScheduleConflicts(List<ScheduleAssignment> assignments) {
         List<ScheduleConflict> conflicts = new ArrayList<>();
+
+        System.out.println("🔍 DEBUGGING: Iniciando detección de conflictos para " + assignments.size() + " asignaciones");
 
         Map<Long, List<ScheduleAssignment>> byEmp = assignments.stream()
                 .collect(Collectors.groupingBy(ScheduleAssignment::getEmployeeId));
@@ -582,26 +582,116 @@ public class EmployeeScheduleService {
             Long employeeId = entry.getKey();
             List<ScheduleAssignment> empAssignments = entry.getValue();
 
+            System.out.println("🔍 Verificando empleado " + employeeId + " con " + empAssignments.size() + " asignaciones");
+
+            // Mostrar las nuevas asignaciones
+            for (int i = 0; i < empAssignments.size(); i++) {
+                ScheduleAssignment assign = empAssignments.get(i);
+                System.out.println("  Nueva asignación " + (i+1) + ": " +
+                        assign.getStartDate() + " - " + assign.getEndDate() +
+                        " (Shift: " + assign.getShiftId() + ")");
+            }
+
             List<EmployeeSchedule> existing = employeeScheduleRepository.findByEmployeeId(employeeId);
+            System.out.println("🔍 Empleado " + employeeId + " tiene " + existing.size() + " horarios existentes");
+
+            // Mostrar horarios existentes
+            for (int i = 0; i < existing.size(); i++) {
+                EmployeeSchedule es = existing.get(i);
+                System.out.println("  Existente " + (i+1) + ": " +
+                        toLocalDate(es.getStartDate()) + " - " +
+                        toLocalDate(es.getEndDate()) +
+                        " (Shift: " + (es.getShift() != null ? es.getShift().getId() : "null") + ")");
+            }
 
             // 1) nuevos vs existentes
             for (ScheduleAssignment newAssignment : empAssignments) {
+                System.out.println("🔍 Verificando nueva asignación: " +
+                        newAssignment.getStartDate() + " - " + newAssignment.getEndDate() +
+                        " (Shift: " + newAssignment.getShiftId() + ")");
+
                 for (EmployeeSchedule existingSchedule : existing) {
-                    ScheduleConflict conflict = checkForConflict(newAssignment, existingSchedule);
-                    if (conflict != null) conflicts.add(conflict);
+                    System.out.println("  🔍 Comparando con horario existente: " +
+                            toLocalDate(existingSchedule.getStartDate()) + " - " +
+                            toLocalDate(existingSchedule.getEndDate()) +
+                            " (Shift: " + (existingSchedule.getShift() != null ? existingSchedule.getShift().getId() : "null") + ")");
+
+                    ScheduleConflict conflict = checkForConflictWithDetailedLogging(newAssignment, existingSchedule);
+                    if (conflict != null) {
+                        System.out.println("❌ CONFLICTO DETECTADO: " + conflict.getMessage());
+                        conflicts.add(conflict);
+                    } else {
+                        System.out.println("  ✅ Sin conflicto con este horario existente");
+                    }
                 }
             }
 
             // 2) nuevos entre sí
             for (int i = 0; i < empAssignments.size(); i++) {
                 for (int j = i + 1; j < empAssignments.size(); j++) {
+                    System.out.println("🔍 Verificando conflicto entre nuevas asignaciones " + (i+1) + " y " + (j+1));
                     ScheduleConflict conflict = checkForConflictBetweenAssignments(
                             empAssignments.get(i), empAssignments.get(j));
-                    if (conflict != null) conflicts.add(conflict);
+                    if (conflict != null) {
+                        System.out.println("❌ CONFLICTO ENTRE NUEVAS ASIGNACIONES: " + conflict.getMessage());
+                        conflicts.add(conflict);
+                    } else {
+                        System.out.println("  ✅ Sin conflicto entre nuevas asignaciones");
+                    }
                 }
             }
         }
+
+        System.out.println("🔍 TOTAL CONFLICTOS ENCONTRADOS: " + conflicts.size());
         return conflicts;
+    }
+
+
+    private ScheduleConflict checkForConflictWithDetailedLogging(ScheduleAssignment assignment, EmployeeSchedule existing) {
+
+        LocalDate newStart = assignment.getStartDate();
+        LocalDate newEnd = (assignment.getEndDate() != null) ? assignment.getEndDate() : newStart;
+
+        LocalDate existingStart = toLocalDate(existing.getStartDate());
+        LocalDate existingEnd = (existing.getEndDate() != null) ? toLocalDate(existing.getEndDate()) : existingStart;
+
+        System.out.println("    Verificando solapamiento:");
+        System.out.println("      Nuevo: " + newStart + " - " + newEnd);
+        System.out.println("      Existente: " + existingStart + " - " + existingEnd);
+
+        if (!datesOverlap(newStart, newEnd, existingStart, existingEnd)) {
+            System.out.println("      Sin solapamiento de fechas");
+            return null;
+        }
+
+        System.out.println("      Fechas se solapan - verificando si es el mismo turno...");
+
+        Shifts newShift = shiftsRepository.findById(assignment.getShiftId()).orElse(null);
+        Shifts existingShift = existing.getShift();
+
+        if (newShift == null || existingShift == null) {
+            System.out.println("      No se pudieron cargar los turnos");
+            return createConflict(assignment, newStart, "No se pudo verificar turnos");
+        }
+
+        System.out.println("      Turno nuevo: " + newShift.getName() + " (ID: " + newShift.getId() + ")");
+        System.out.println("      Turno existente: " + existingShift.getName() + " (ID: " + existingShift.getId() + ")");
+
+        // SIMPLIFICADO: Si es exactamente el mismo turno y fechas = permitir (reasignación)
+        boolean isExactDuplicate = Objects.equals(assignment.getShiftId(), existing.getShift().getId()) &&
+                newStart.equals(existingStart) &&
+                newEnd.equals(existingEnd);
+
+        if (isExactDuplicate) {
+            System.out.println("      Es exactamente el mismo turno y fechas - permitiendo reasignación");
+            return null;
+        }
+
+        // EN CUALQUIER OTRO CASO DE SOLAPAMIENTO = CONFLICTO
+        System.out.println("      CONFLICTO: Fechas solapadas con turnos diferentes");
+        return createConflict(assignment, newStart,
+                "No se puede asignar porque el empleado ya tiene otro turno en fechas que se solapan " +
+                        "(Existente: " + existingShift.getName() + " del " + existingStart + " al " + existingEnd + ")");
     }
 
     private ScheduleConflict checkForConflict(ScheduleAssignment assignment, EmployeeSchedule existing) {
@@ -904,15 +994,7 @@ public class EmployeeScheduleService {
         return result;
     }
 
-    @Transactional
-    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(Long dependencyId,
-                                                                LocalDate startDate,
-                                                                LocalDate endDate,
-                                                                java.time.LocalTime startTime,
-                                                                Long shiftId) {
-        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(dependencyId);
-        return schedules.stream().map(this::convertToDTO).collect(Collectors.toList());
-    }
+
 
     @Transactional
     public void deleteEmployeeSchedule(Long id) {
@@ -970,4 +1052,44 @@ public class EmployeeScheduleService {
         } catch (Exception ignore) { }
         return null;
     }
+
+
+    // EmployeeScheduleService.java
+    @Transactional
+    public List<EmployeeScheduleDTO> getSchedulesByDependencyId(
+            Long dependencyId,
+            LocalDate startDate,
+            LocalDate endDate,
+            java.time.LocalTime startTime,
+            Long shiftId
+    ) {
+        if (dependencyId == null) {
+            return Collections.emptyList();
+        }
+        List<EmployeeSchedule> schedules;
+
+        if (startDate != null && endDate != null && startTime != null && shiftId != null) {
+            schedules = employeeScheduleRepository.findByDependencyIdAndFullDateRangeAndShiftId(
+                    dependencyId, startDate, endDate, java.sql.Time.valueOf(startTime), shiftId);
+        } else if (startDate != null && endDate != null && shiftId != null) {
+            schedules = employeeScheduleRepository.findByDependencyIdAndDateRangeAndShiftId(
+                    dependencyId, startDate, endDate, shiftId);
+        } else if (startDate != null && endDate != null && startTime != null) {
+            schedules = employeeScheduleRepository.findByDependencyIdAndDateRangeAndStartTime(
+                    dependencyId, startDate, endDate, java.sql.Time.valueOf(startTime));
+        } else if (startDate != null && endDate != null) {
+            schedules = employeeScheduleRepository.findByDependencyIdAndDateRangeNoTime(
+                    dependencyId, startDate, endDate);
+        } else if (shiftId != null) {
+            schedules = employeeScheduleRepository.findByDependencyIdAndShiftId(
+                    dependencyId, shiftId);
+        } else {
+            schedules = employeeScheduleRepository.findByDependencyId(dependencyId);
+        }
+
+        return schedules.stream()
+                .map(this::convertToDTOWithHours) // ya rellena hoursInPeriod
+                .collect(Collectors.toList());
+    }
+
 }

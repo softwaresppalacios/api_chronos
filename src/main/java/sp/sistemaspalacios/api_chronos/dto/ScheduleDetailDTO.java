@@ -17,7 +17,7 @@ public class ScheduleDetailDTO {
     private String shiftName;
     private String startDate;
     private String endDate;
-
+    private Long   shiftId;
     // Total del turno (regular + festivo + extra)
     private Double hoursInPeriod;
 

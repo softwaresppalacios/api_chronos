@@ -205,4 +205,8 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             @Param("endDate") LocalDate endDate,
             @Param("shiftId") Long shiftId);
 
+
+    @Query("SELECT es FROM EmployeeSchedule es JOIN FETCH es.shift WHERE es.id IN :ids")
+    List<EmployeeSchedule> findAllByIdWithShift(@Param("ids") List<Long> ids);
+
 }

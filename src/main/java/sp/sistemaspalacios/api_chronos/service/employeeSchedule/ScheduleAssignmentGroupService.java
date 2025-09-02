@@ -2,7 +2,6 @@ package sp.sistemaspalacios.api_chronos.service.employeeSchedule;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import sp.sistemaspalacios.api_chronos.dto.OvertimeTypeDTO;
@@ -40,11 +39,6 @@ public class ScheduleAssignmentGroupService {
     // >>> NUEVO: inyectamos para saber si hay exención (incluye NO_APLICAR_RECARGO)
     private final HolidayExemptionService holidayExemptionService;
 
-    @Value("${chronos.group.default-status:ACTIVE}")
-    private String defaultGroupStatus;
-
-    @Value("${chronos.shift.default-name:Sin nombre}")
-    private String defaultShiftName;
 
     private final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
 
@@ -108,34 +102,43 @@ public class ScheduleAssignmentGroupService {
         HoursCalculation hoursCalc = calculateHours(allSchedules);
 
         updateGroupTotals(group, hoursCalc);
+        syncStatusWithDates(group);
         group = groupRepository.save(group);
 
         return convertToDTO(group, newSchedules, hoursCalc);
     }
 
     public List<ScheduleAssignmentGroupDTO> getEmployeeGroups(Long employeeId) {
-        return groupRepository.findByEmployeeId(employeeId).stream()
-                .map(this::convertGroupToDTO)
-                .collect(Collectors.toList());
-    }
-
-    public ScheduleAssignmentGroupDTO getLatestGroupForEmployee(Long employeeId) {
-        return groupRepository.findByEmployeeId(employeeId).stream()
-                .max(Comparator.comparing(ScheduleAssignmentGroup::getId))
-                .map(this::convertGroupToDTO)
-                .orElse(null);
-    }
-
-    public ScheduleAssignmentGroupDTO getGroupById(Long groupId) {
-        return groupRepository.findById(groupId).map(this::convertGroupToDTO).orElse(null);
+        var groups = groupRepository.findByEmployeeId(employeeId);
+        for (var g : groups) syncStatusWithDates(g); // ← AQUI
+        return groups.stream().map(this::convertGroupToDTO).collect(Collectors.toList());
     }
 
     @Transactional
+    public ScheduleAssignmentGroupDTO getLatestGroupForEmployee(Long employeeId) {
+        var opt = groupRepository.findByEmployeeId(employeeId).stream()
+                .max(Comparator.comparing(ScheduleAssignmentGroup::getId));
+        if (opt.isEmpty()) return null;
+        var g = opt.get();
+        syncStatusWithDates(g); // ← AQUI
+        return convertGroupToDTO(g);
+    }
+
+
+    @Transactional
+    public ScheduleAssignmentGroupDTO getGroupById(Long groupId) {
+        var g = getGroupOrThrow(groupId);
+        syncStatusWithDates(g); // ← AQUI
+        return convertToDTO(g, scheduleRepository.findAllById(g.getEmployeeScheduleIds()),
+                calculateHours(scheduleRepository.findAllById(g.getEmployeeScheduleIds())));
+    }
+    @Transactional
     public ScheduleAssignmentGroupDTO recalculateGroup(Long groupId) {
         ScheduleAssignmentGroup group = getGroupOrThrow(groupId);
-        List<EmployeeSchedule> schedules = scheduleRepository.findAllById(group.getEmployeeScheduleIds());
+        List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
         HoursCalculation hoursCalc = calculateHours(schedules);
         updateGroupTotals(group, hoursCalc);
+        syncStatusWithDates(group);
         group = groupRepository.save(group);
         return convertToDTO(group, schedules, hoursCalc);
     }
@@ -514,7 +517,7 @@ public class ScheduleAssignmentGroupService {
     }
 
     private ScheduleAssignmentGroupDTO convertGroupToDTO(ScheduleAssignmentGroup group) {
-        List<EmployeeSchedule> schedules = scheduleRepository.findAllById(group.getEmployeeScheduleIds());
+        List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
         HoursCalculation calc = calculateHours(schedules);
         return convertToDTO(group, schedules, calc);
     }
@@ -633,32 +636,81 @@ public class ScheduleAssignmentGroupService {
         return createScheduleDetailWithCalculation(schedule);
     }
 
-    private String getEffectiveStatus(ScheduleAssignmentGroup group) {
-        LocalDate today = LocalDate.now();
 
-        Date end = group.getPeriodEnd();
-        if (end == null) return "ACTIVE";
-
-        LocalDate endDate;
-        if (end instanceof java.sql.Date) {
-            endDate = ((java.sql.Date) end).toLocalDate();
-        } else {
-            endDate = java.time.Instant.ofEpochMilli(end.getTime())
-                    .atZone(ZoneId.systemDefault())
-                    .toLocalDate();
+    @Transactional
+    private void syncStatusWithDates(ScheduleAssignmentGroup g) {
+        String effective = getEffectiveStatus(g); // ya lo tienes
+        if (!Objects.equals(g.getStatus(), effective)) {
+            g.setStatus(effective);
+            groupRepository.save(g); // ← ahora sí se guarda en BD
         }
+    }
+    private String getEffectiveStatus(ScheduleAssignmentGroup group) {
+        if (group.getPeriodEnd() == null) return "ACTIVE";
+
+        LocalDate today = LocalDate.now();
+        LocalDate endDate = convertToLocalDate(group.getPeriodEnd());
 
         return today.isAfter(endDate) ? "INACTIVE" : "ACTIVE";
+    }
+
+    @Transactional
+    public void autoUpdateExpiredGroups() {
+        log.info("🔄 Actualizando automáticamente estados de grupos expirados...");
+
+        List<ScheduleAssignmentGroup> allGroups = groupRepository.findAll();
+        int updatedCount = 0;
+
+        for (ScheduleAssignmentGroup group : allGroups) {
+            String currentStatus = group.getStatus();
+            String effectiveStatus = getEffectiveStatus(group);
+
+            if (!Objects.equals(currentStatus, effectiveStatus)) {
+                group.setStatus(effectiveStatus);
+                updatedCount++;
+            }
+        }
+
+        groupRepository.saveAll(allGroups);
+        log.info("✅ {} grupos actualizados automáticamente", updatedCount);
+    }
+
+    private LocalDate convertToLocalDate(Date date) {
+        if (date instanceof java.sql.Date) {
+            return ((java.sql.Date) date).toLocalDate();
+        }
+        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
     }
 
     public ScheduleDetailDTO createScheduleDetailWithCalculation(EmployeeSchedule schedule) {
         ScheduleDetailDTO detail = new ScheduleDetailDTO();
 
         detail.setScheduleId(schedule.getId());
-        detail.setShiftName(schedule.getShift() != null ? schedule.getShift().getName() : defaultShiftName);
         detail.setStartDate(dateFormat.format(schedule.getStartDate()));
         detail.setEndDate(dateFormat.format(schedule.getEndDate() != null ? schedule.getEndDate() : schedule.getStartDate()));
 
+        // >>> NUEVO: cargar ID y nombre del turno
+        if (schedule.getShift() != null) {
+            var shift = schedule.getShift();
+            detail.setShiftId(shift.getId());
+
+            // Asume que Shifts tiene getName(); si tu campo se llama distinto cámbialo aquí.
+            String name = null;
+            try { name = shift.getName(); } catch (Exception ignored) {}
+            if (name == null || name.isBlank()) {
+                // Fallbacks comunes si tu entidad lo nombró distinto
+                try { name = (String) shift.getClass().getMethod("getShiftName").invoke(shift); } catch (Exception ignored) {}
+                if (name == null || name.isBlank()) {
+                    try { name = (String) shift.getClass().getMethod("getTitle").invoke(shift); } catch (Exception ignored) {}
+                }
+            }
+            detail.setShiftName((name != null && !name.isBlank()) ? name : "Turno #" + shift.getId());
+        } else {
+            detail.setShiftName("Sin turno");
+        }
+        // <<< FIN NUEVO
+
+        // Cálculo de horas (lo que ya tenías)
         List<EmployeeSchedule> soloEste = Collections.singletonList(schedule);
         HoursCalculation calc = calculateHours(soloEste);
         HoursSummary summary = HoursSummary.fromCalculation(calc, overtimeTypeService.getAllActiveTypes());
@@ -743,7 +795,6 @@ public class ScheduleAssignmentGroupService {
         group.setPeriodStart(period.getStartDate());
         group.setPeriodEnd(period.getEndDate());
         group.setEmployeeScheduleIds(new ArrayList<>(scheduleIds));
-        group.setStatus(defaultGroupStatus);
         return group;
     }
 
