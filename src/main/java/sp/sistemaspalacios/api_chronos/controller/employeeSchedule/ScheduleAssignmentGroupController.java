@@ -2,12 +2,15 @@ package sp.sistemaspalacios.api_chronos.controller.employeeSchedule;
 
 
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import sp.sistemaspalacios.api_chronos.service.employeeSchedule.ScheduleAssignmentGroupService;
 import sp.sistemaspalacios.api_chronos.dto.ScheduleAssignmentGroupDTO;
+import sp.sistemaspalacios.api_chronos.service.employeeSchedule.ScheduleAssignmentGroupService;
 
+import java.time.LocalDate;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -160,6 +163,44 @@ public class ScheduleAssignmentGroupController {
 
         public void setScheduleIds(List<Long> scheduleIds) {
             this.scheduleIds = scheduleIds;
+        }
+    }
+
+
+    @GetMapping
+    public ResponseEntity<?> getAllScheduleGroups(
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String shiftName,
+            @RequestParam(required = false) Long employeeId,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate) {
+
+        try {
+            List<ScheduleAssignmentGroupDTO> groups = groupService.getAllScheduleGroupsWithFilters(
+                    status, shiftName, employeeId, startDate, endDate);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("totalGroups", groups.size());
+            response.put("groups", groups);
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+
+    @GetMapping("/available-statuses")
+    public ResponseEntity<List<Map<String, String>>> getAvailableStatuses() {
+        try {
+            List<Map<String, String>> statuses = groupService.getAvailableStatuses();
+            return ResponseEntity.ok(statuses);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Collections.emptyList());
         }
     }
 }

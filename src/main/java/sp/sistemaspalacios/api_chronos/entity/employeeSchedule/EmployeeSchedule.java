@@ -2,10 +2,8 @@ package sp.sistemaspalacios.api_chronos.entity.employeeSchedule;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
 import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 
-import java.sql.Time;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -58,7 +56,5 @@ public class EmployeeSchedule {
         return days;
     }
 
-    public EmployeeScheduleDTO getEmployee() {
-        return null;
-    }
+
 }

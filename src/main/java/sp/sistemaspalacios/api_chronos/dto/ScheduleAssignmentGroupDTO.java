@@ -11,7 +11,6 @@ public class ScheduleAssignmentGroupDTO {
 
     private Long id;
     private Long employeeId;
-    private String employeeName;  // Nombre del empleado (lo traemos del microservicio)
     private String periodStart;   // "yyyy-MM-dd"
     private String periodEnd;     // "yyyy-MM-dd"
     private List<Long> employeeScheduleIds;  // IDs de los schedules agrupados
@@ -40,6 +39,10 @@ public class ScheduleAssignmentGroupDTO {
 
     // Constructor vacío
     public ScheduleAssignmentGroupDTO() {}
+
+
+    // Getter y setter
+
 
     // Constructor con parámetros básicos
     public ScheduleAssignmentGroupDTO(Long employeeId, String periodStart, String periodEnd) {

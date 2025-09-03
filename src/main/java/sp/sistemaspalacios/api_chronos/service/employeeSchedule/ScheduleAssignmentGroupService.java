@@ -39,6 +39,7 @@ public class ScheduleAssignmentGroupService {
     // >>> NUEVO: inyectamos para saber si hay exención (incluye NO_APLICAR_RECARGO)
     private final HolidayExemptionService holidayExemptionService;
 
+    // >>> NUEVO: base URL por configuración (sin hardcode; si no está, no se consulta)
 
     private final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
 
@@ -124,7 +125,6 @@ public class ScheduleAssignmentGroupService {
         return convertGroupToDTO(g);
     }
 
-
     @Transactional
     public ScheduleAssignmentGroupDTO getGroupById(Long groupId) {
         var g = getGroupOrThrow(groupId);
@@ -132,6 +132,7 @@ public class ScheduleAssignmentGroupService {
         return convertToDTO(g, scheduleRepository.findAllById(g.getEmployeeScheduleIds()),
                 calculateHours(scheduleRepository.findAllById(g.getEmployeeScheduleIds())));
     }
+
     @Transactional
     public ScheduleAssignmentGroupDTO recalculateGroup(Long groupId) {
         ScheduleAssignmentGroup group = getGroupOrThrow(groupId);
@@ -301,7 +302,6 @@ public class ScheduleAssignmentGroupService {
 
         return all;
     }
-
 
     private boolean shouldTreatAsHoliday(LocalDate date, EmployeeSchedule schedule, boolean isHoliday) {
         if (!isHoliday) return false;
@@ -529,6 +529,7 @@ public class ScheduleAssignmentGroupService {
 
         dto.setId(group.getId());
         dto.setEmployeeId(group.getEmployeeId());
+
         dto.setPeriodStart(dateFormat.format(group.getPeriodStart()));
         dto.setPeriodEnd(dateFormat.format(group.getPeriodEnd()));
         dto.setEmployeeScheduleIds(group.getEmployeeScheduleIds());
@@ -555,6 +556,8 @@ public class ScheduleAssignmentGroupService {
             log.info("  Turno: {} - Regular: {}h, Extra: {}h, Festivo: {}h",
                     d.getShiftName(), d.getRegularHours(), d.getOvertimeHours(), d.getFestivoHours());
         });
+
+
         return dto;
     }
 
@@ -636,7 +639,6 @@ public class ScheduleAssignmentGroupService {
         return createScheduleDetailWithCalculation(schedule);
     }
 
-
     @Transactional
     private void syncStatusWithDates(ScheduleAssignmentGroup g) {
         String effective = getEffectiveStatus(g); // ya lo tienes
@@ -645,6 +647,7 @@ public class ScheduleAssignmentGroupService {
             groupRepository.save(g); // ← ahora sí se guarda en BD
         }
     }
+
     private String getEffectiveStatus(ScheduleAssignmentGroup group) {
         if (group.getPeriodEnd() == null) return "ACTIVE";
 
@@ -1119,5 +1122,189 @@ public class ScheduleAssignmentGroupService {
                 this.nightMinutes = nightMinutes;
             }
         }
+    }
+
+    public List<ScheduleAssignmentGroupDTO> getAllScheduleGroupsWithFilters(
+            String status,
+            String shiftName,
+            Long employeeId,
+            LocalDate startDate,
+            LocalDate endDate) {
+
+        log.info("🔍 Buscando grupos con filtros - Status: {}, Shift: {}, Employee: {}, Fechas: {} - {}",
+                status, shiftName, employeeId, startDate, endDate);
+
+        // 1) Traer todos y sincronizar estado efectivo
+        List<ScheduleAssignmentGroup> allGroups = groupRepository.findAll();
+        for (ScheduleAssignmentGroup group : allGroups) {
+            syncStatusWithDates(group);
+        }
+
+        // 2) Filtrar por status / empleado / fechas (versión "safe" ante nulls)
+        List<ScheduleAssignmentGroup> filteredGroups = allGroups.stream()
+                .filter(group -> filterByStatus(group, status))
+                .filter(group -> filterByEmployee(group, employeeId))
+                .filter(group -> filterByDateRangeSafe(group, startDate, endDate))  // <= usa el helper de abajo
+                .collect(Collectors.toList());
+
+        if (filteredGroups.isEmpty()) {
+            log.info("✅ Encontrados 0 grupos que cumplen los criterios");
+            return Collections.emptyList();
+        }
+
+        // 3) Convertir a DTOs, calcular horas y **SIEMPRE** setear employeeName
+// 3) Convertir a DTOs, calcular horas y **SIEMPRE** setear employeeName
+        List<ScheduleAssignmentGroupDTO> result = filteredGroups.stream()
+                .map(group -> {
+                    try {
+                        List<EmployeeSchedule> schedules =
+                                scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
+
+                        // Filtro por turno si llega shiftName
+                        if (shiftName != null && !shiftName.trim().isEmpty() && !"TODOS".equalsIgnoreCase(shiftName)) {
+                            final String sn = shiftName.trim();
+                            schedules = schedules.stream()
+                                    .filter(s -> {
+                                        String display = getShiftDisplayName(s.getShift());
+                                        return display != null && sn.equalsIgnoreCase(display.trim());
+                                    })
+                                    .collect(Collectors.toList());
+                            if (schedules.isEmpty()) return null;
+                        }
+
+                        HoursCalculation calc = calculateHours(schedules);
+                        ScheduleAssignmentGroupDTO dto = convertToDTO(group, schedules, calc);
+
+
+
+                        return dto;
+
+                    } catch (Exception e) {
+                        log.error("Error procesando grupo {}: {}", group.getId(), e.getMessage());
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+
+        log.info("✅ Encontrados {} grupos que cumplen los criterios", result.size());
+        return result;
+    }
+
+    // ====== FILTRO DE FECHAS "SAFE" (maneja periodos con end null) ======
+    private boolean filterByDateRangeSafe(ScheduleAssignmentGroup group, LocalDate startDate, LocalDate endDate) {
+        if (startDate == null && endDate == null) return true;
+
+        LocalDate groupStart = toLocalDateOrMin(group.getPeriodStart()); // null -> MIN
+        LocalDate groupEnd   = toLocalDateOrMax(group.getPeriodEnd());   // null -> MAX
+
+        if (startDate != null && endDate == null) {
+            return !groupEnd.isBefore(startDate);
+        }
+        if (startDate == null /* && endDate != null */) {
+            return !groupStart.isAfter(endDate);
+        }
+        return !groupStart.isAfter(endDate) && !groupEnd.isBefore(startDate);
+    }
+
+    private LocalDate toLocalDateOrMin(Date date) {
+        if (date == null) return LocalDate.MIN;
+        if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
+        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
+    private LocalDate toLocalDateOrMax(Date date) {
+        if (date == null) return LocalDate.MAX;
+        if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
+        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
+    // ====== RESOLVER NOMBRE SIN LLAMAR AL MICRO: desde los schedules / relación employee ======
+
+    // Métodos auxiliares de filtrado
+    private boolean filterByStatus(ScheduleAssignmentGroup group, String status) {
+        if (status == null || status.trim().isEmpty() || "TODOS".equalsIgnoreCase(status)) {
+            return true;
+        }
+        String effectiveStatus = getEffectiveStatus(group);
+        return status.equalsIgnoreCase(effectiveStatus);
+    }
+
+    private boolean filterByEmployee(ScheduleAssignmentGroup group, Long employeeId) {
+        if (employeeId == null) {
+            return true;
+        }
+        return Objects.equals(group.getEmployeeId(), employeeId);
+    }
+
+    private boolean filterByDateRange(ScheduleAssignmentGroup group, LocalDate startDate, LocalDate endDate) {
+        if (startDate == null && endDate == null) {
+            return true;
+        }
+
+        LocalDate groupStart = convertToLocalDate(group.getPeriodStart());
+        LocalDate groupEnd = convertToLocalDate(group.getPeriodEnd());
+
+        // Si solo se especifica fecha inicio
+        if (startDate != null && endDate == null) {
+            return !groupEnd.isBefore(startDate);
+        }
+
+        // Si solo se especifica fecha fin
+        if (startDate == null && endDate != null) {
+            return !groupStart.isAfter(endDate);
+        }
+
+        // Si se especifican ambas fechas - verificar solapamiento
+        return !groupStart.isAfter(endDate) && !groupEnd.isBefore(startDate);
+    }
+
+    public List<Map<String, String>> getAvailableStatuses() {
+        // Obtener estados únicos de los grupos existentes
+        List<String> uniqueStatuses = groupRepository.findAll()
+                .stream()
+                .map(group -> getEffectiveStatus(group))
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+
+        List<Map<String, String>> statusOptions = new ArrayList<>();
+        statusOptions.add(Map.of("label", "Todos", "value", "TODOS"));
+
+        // Mapear códigos a etiquetas
+        Map<String, String> statusLabels = Map.of(
+                "ACTIVE", "Activos",
+                "INACTIVE", "Inactivos"
+        );
+
+        uniqueStatuses.forEach(status -> {
+            statusOptions.add(Map.of(
+                    "label", statusLabels.getOrDefault(status, status),
+                    "value", status
+            ));
+        });
+
+        return statusOptions;
+    }
+
+    private String getShiftDisplayName(Shifts shift) {
+        if (shift == null) return null;
+        try {
+            String n = shift.getName();
+            if (n != null && !n.isBlank()) return n;
+        } catch (Exception ignored) {}
+
+        try {
+            String n = (String) shift.getClass().getMethod("getShiftName").invoke(shift);
+            if (n != null && !n.isBlank()) return n;
+        } catch (Exception ignored) {}
+
+        try {
+            String n = (String) shift.getClass().getMethod("getTitle").invoke(shift);
+            if (n != null && !n.isBlank()) return n;
+        } catch (Exception ignored) {}
+
+        return null;
     }
 }

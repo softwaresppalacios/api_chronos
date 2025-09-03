@@ -6,10 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
-import sp.sistemaspalacios.api_chronos.dto.EmployeeResponse;
-import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
-import sp.sistemaspalacios.api_chronos.dto.ScheduleAssignmentGroupDTO;
-import sp.sistemaspalacios.api_chronos.dto.ScheduleDetailDTO;
+import sp.sistemaspalacios.api_chronos.dto.*;
 import sp.sistemaspalacios.api_chronos.dto.ScheduleDto.*;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
@@ -19,17 +16,20 @@ import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleDayRepository;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleRepository;
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleTimeBlockRepository;
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 import sp.sistemaspalacios.api_chronos.service.boundaries.generalConfiguration.GeneralConfigurationService;
 import sp.sistemaspalacios.api_chronos.service.boundaries.holiday.HolidayService;
-import sp.sistemaspalacios.api_chronos.dto.ScheduleDto.ShiftSegmentDetail;
+
 import java.math.BigDecimal;
 import java.sql.Time;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
+
 
 /**
  * Servicio principal de asignaciones.
@@ -45,6 +45,9 @@ public class EmployeeScheduleService {
     private final RestTemplate restTemplate;
     private final EmployeeScheduleDayRepository employeeScheduleDayRepository;
     private final GeneralConfigurationService configService;
+
+    private final EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository;
+
     private final HolidayService holidayService;
 
     // Servicios inyectados
@@ -61,7 +64,7 @@ public class EmployeeScheduleService {
             GeneralConfigurationService configService,
             HolidayService holidayService,
             ScheduleAssignmentGroupService groupService,
-            HolidayExemptionService holidayExemptionService
+            HolidayExemptionService holidayExemptionService,  EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository
     ) {
         this.employeeScheduleRepository = employeeScheduleRepository;
         this.shiftsRepository = shiftsRepository;
@@ -70,6 +73,8 @@ public class EmployeeScheduleService {
         this.configService = configService;
         this.holidayService = holidayService;
         this.groupService = groupService;
+        this.employeeScheduleTimeBlockRepository = employeeScheduleTimeBlockRepository;
+
         this.holidayExemptionService = holidayExemptionService;
     }
 
@@ -861,7 +866,7 @@ public class EmployeeScheduleService {
     // =================== MÉTODOS AUXILIARES PARA CALCULAR SEGMENTOS ===================
 
     // Método auxiliar para obtener nombre del empleado
-    private String getEmployeeName(Long employeeId) {
+    public String getEmployeeName(Long employeeId) {
         try {
             EmployeeResponse response = getEmployeeData(employeeId);
             if (response != null && response.getEmployee() != null) {
@@ -1004,29 +1009,6 @@ public class EmployeeScheduleService {
         employeeScheduleRepository.deleteById(id);
     }
 
-    private EmployeeScheduleDTO convertToDTO(EmployeeSchedule schedule) {
-        EmployeeScheduleDTO dto = new EmployeeScheduleDTO();
-        dto.setId(schedule.getId());
-        dto.setNumberId(Long.valueOf(schedule.getEmployeeId().toString()));
-        dto.setStartDate(dateFormat.format(schedule.getStartDate()));
-        dto.setEndDate(schedule.getEndDate() != null ? dateFormat.format(schedule.getEndDate()) : null);
-
-        if (schedule.getShift() != null) {
-            dto.setShiftName(schedule.getShift().getName());
-        }
-
-        try {
-            EmployeeResponse response = getEmployeeData(schedule.getEmployeeId());
-            if (response != null && response.getEmployee() != null) {
-                EmployeeResponse.Employee emp = response.getEmployee();
-                dto.setFirstName(emp.getFirstName() != null ? emp.getFirstName() : "");
-                dto.setSecondName(emp.getSecondName() != null ? emp.getSecondName() : "");
-                dto.setSurName(emp.getSurName() != null ? emp.getSurName() : "");
-                dto.setSecondSurname(emp.getSecondSurname() != null ? emp.getSecondSurname() : "");
-            }
-        } catch (Exception ignore) { }
-        return dto;
-    }
 
     private EmployeeScheduleDTO convertToDTOWithHours(EmployeeSchedule schedule) {
         EmployeeScheduleDTO dto = convertToDTO(schedule);
@@ -1041,7 +1023,7 @@ public class EmployeeScheduleService {
         return dto;
     }
 
-    private EmployeeResponse getEmployeeData(Long employeeId) {
+    public     EmployeeResponse getEmployeeData(Long employeeId) {
         if (employeeId == null) return null;
         try {
             String url = "http://192.168.23.3:40020/api/employees/bynumberid/" + employeeId;
@@ -1090,6 +1072,420 @@ public class EmployeeScheduleService {
         return schedules.stream()
                 .map(this::convertToDTOWithHours) // ya rellena hoursInPeriod
                 .collect(Collectors.toList());
+    }
+
+    public List<EmployeeScheduleDTO> getSchedulesByShiftId(Long shiftId) {
+        if (shiftId == null || shiftId <= 0) {
+            throw new IllegalArgumentException("Shift ID debe ser un número válido.");
+        }
+        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByShiftId(shiftId);
+        return schedules.stream()
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+    }
+
+    public List<EmployeeSchedule> createEmployeeSchedules(List<EmployeeSchedule> schedules) {
+        return schedules;
+    }
+
+    public EmployeeSchedule createEmployeeSchedule(EmployeeSchedule schedule) {
+        return schedule;
+    }
+
+    @Transactional
+    public EmployeeSchedule updateEmployeeSchedule(Long id, EmployeeSchedule schedule) {
+        EmployeeSchedule existing = employeeScheduleRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("EmployeeSchedule not found with id: " + id));
+
+        validateSchedule(schedule);
+
+        existing.setEmployeeId(schedule.getEmployeeId());
+
+        if (schedule.getShift() != null) {
+            existing.setShift(schedule.getShift());
+        }
+
+        existing.setStartDate(schedule.getStartDate());
+        existing.setEndDate(schedule.getEndDate());
+        existing.setUpdatedAt(new Date());
+
+        return employeeScheduleRepository.save(existing);
+    }
+
+
+    private void updateTimeBlockDetails(EmployeeScheduleTimeBlock existingTimeBlock, TimeBlockDTO timeBlockDTO) {
+        existingTimeBlock.setStartTime(Time.valueOf(timeBlockDTO.getStartTime()));
+        existingTimeBlock.setEndTime(Time.valueOf(timeBlockDTO.getEndTime()));
+        existingTimeBlock.setUpdatedAt(new Date());
+    }
+
+    private void validateDayAndParentDay(EmployeeScheduleTimeBlock existingTimeBlock, TimeBlockDTO timeBlockDTO) {
+        EmployeeScheduleDay currentDay = existingTimeBlock.getEmployeeScheduleDay();
+
+        // Check if the time block belongs to the specified day
+        if (!currentDay.getId().equals(timeBlockDTO.getEmployeeScheduleDayId())) {
+            throw new IllegalArgumentException("Time block does not belong to the specified day");
+        }
+
+        // Additional parent day validation (based on the hint in the original comment)
+        Long parentDayId = currentDay.getParentDayId();
+        if (parentDayId != null) {
+            // Optional: Add specific parent day validation logic here
+            // For example, ensuring the update respects parent day constraints
+        }
+    }
+
+    private void validateEmployeePermissions(EmployeeScheduleTimeBlock existingTimeBlock, TimeBlockDTO timeBlockDTO) {
+        EmployeeSchedule employeeSchedule = existingTimeBlock.getEmployeeScheduleDay().getEmployeeSchedule();
+
+        if (employeeSchedule == null) {
+            throw new IllegalArgumentException("No employee schedule found for this time block");
+        }
+
+
+    }
+    private void validateInputParameters(TimeBlockDTO timeBlockDTO) {
+        if (timeBlockDTO == null) {
+            throw new IllegalArgumentException("Time block data cannot be null");
+        }
+        if (timeBlockDTO.getStartTime() == null || timeBlockDTO.getEndTime() == null) {
+            throw new IllegalArgumentException("Start time and end time must be provided");
+        }
+        if (timeBlockDTO.getEmployeeScheduleDayId() == null) {
+            throw new IllegalArgumentException("Employee schedule day ID must be specified");
+        }
+    }
+    private void validateTimeBlockInput(TimeBlockDTO timeBlockDTO) {
+        if (timeBlockDTO.getId() == null || timeBlockDTO.getId() <= 0) {
+            throw new IllegalArgumentException("Invalid time block ID");
+        }
+        if (timeBlockDTO.getEmployeeScheduleDayId() == null || timeBlockDTO.getEmployeeScheduleDayId() <= 0) {
+            throw new IllegalArgumentException("Invalid employee schedule day ID");
+        }
+        if (timeBlockDTO.getNumberId() == null || timeBlockDTO.getNumberId().isEmpty()) {
+            throw new IllegalArgumentException("Invalid employee identification number");
+        }
+    }
+
+    private Map<String, Object> createTimeBlockResponse(EmployeeScheduleTimeBlock updatedBlock) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("id", updatedBlock.getId());
+        response.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
+        response.put("startTime", updatedBlock.getStartTime() != null ? updatedBlock.getStartTime().toString() : null);
+        response.put("endTime", updatedBlock.getEndTime() != null ? updatedBlock.getEndTime().toString() : null);
+        response.put("numberId", updatedBlock.getEmployeeScheduleDay().getEmployeeSchedule().getEmployeeId().toString());
+        response.put("updatedAt", updatedBlock.getUpdatedAt());
+
+        return response;
+    }
+
+    private void validateSchedule(EmployeeSchedule schedule) {
+        if (schedule.getEmployeeId() == null || schedule.getEmployeeId() <= 0) {
+            throw new IllegalArgumentException("Employee ID es obligatorio y debe ser un número válido.");
+        }
+        if (schedule.getShift() == null || schedule.getShift().getId() == null || schedule.getShift().getId() <= 0) {
+            throw new IllegalArgumentException("Shift ID es obligatorio y debe ser un número válido.");
+        }
+        if (schedule.getStartDate() == null) {
+            throw new IllegalArgumentException("La fecha de inicio es obligatoria.");
+        }
+        if (schedule.getEndDate() != null && schedule.getStartDate().after(schedule.getEndDate())) {
+            throw new IllegalArgumentException("La fecha de inicio debe ser anterior a la fecha de fin.");
+        }
+    }
+    @Transactional
+    public List<EmployeeSchedule> createMultipleSchedules(List<EmployeeSchedule> schedules) {
+        List<EmployeeSchedule> savedSchedules = new ArrayList<>();
+
+        // Variable para almacenar un ID común para days_parent_id
+        Long commonDaysParentId = null;
+
+        for (EmployeeSchedule schedule : schedules) {
+            // Validaciones y configuraciones básicas
+            validateSchedule(schedule);
+            schedule.setCreatedAt(new Date());
+
+            // Buscar y establecer el turno
+            Shifts shift = shiftsRepository.findById(schedule.getShift().getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("Turno no encontrado"));
+            schedule.setShift(shift);
+
+            // Generar días de horario
+            generateScheduleDays(schedule);
+
+            // Guardar el horario
+            EmployeeSchedule savedSchedule = employeeScheduleRepository.save(schedule);
+
+            // Guardar explícitamente los días
+            List<EmployeeScheduleDay> savedDays = new ArrayList<>();
+            for (EmployeeScheduleDay day : savedSchedule.getDays()) {
+                day.setEmployeeSchedule(savedSchedule);
+
+                // MODIFICACIÓN IMPORTANTE: Establecer días padre
+                if (commonDaysParentId == null) {
+                    commonDaysParentId = savedSchedule.getId();
+                }
+                day.setDaysParentId(commonDaysParentId);
+
+                EmployeeScheduleDay savedDay = employeeScheduleDayRepository.save(day);
+                savedDays.add(savedDay);
+            }
+
+            savedSchedule.setDays(savedDays);
+
+            // Establecer el mismo days_parent_id para todos los horarios
+            savedSchedule.setDaysParentId(commonDaysParentId);
+            employeeScheduleRepository.save(savedSchedule);
+
+            savedSchedules.add(savedSchedule);
+        }
+
+        return savedSchedules;
+    }
+    @Transactional
+    public EmployeeScheduleTimeBlock updateTimeBlockByDependency(TimeBlockDependencyDTO timeBlockDTO) {
+        // 1. Obtener el bloque de tiempo existente
+        EmployeeScheduleTimeBlock existingTimeBlock = employeeScheduleTimeBlockRepository
+                .findById(timeBlockDTO.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Bloque de tiempo no encontrado con id: " + timeBlockDTO.getId()));
+
+        // 2. Validar que el bloque pertenece al día especificado
+        if (!existingTimeBlock.getEmployeeScheduleDay().getId().equals(timeBlockDTO.getEmployeeScheduleDayId())) {
+            throw new IllegalArgumentException("El bloque de tiempo no pertenece al día especificado.");
+        }
+
+        // 3. Validar que pertenece a la dependencia especificada
+        EmployeeScheduleDay employeeScheduleDay = existingTimeBlock.getEmployeeScheduleDay();
+        EmployeeSchedule employeeSchedule = employeeScheduleDay.getEmployeeSchedule();
+
+        // Verificaciones más detalladas
+        if (employeeSchedule == null) {
+            throw new IllegalArgumentException("No se encontró el horario del empleado.");
+        }
+
+        if (employeeSchedule.getShift() == null) {
+            throw new IllegalArgumentException("No se encontró el turno del empleado.");
+        }
+
+        // Obtener los IDs de dependencia
+
+
+
+
+        // 4. Validar horas
+        if (timeBlockDTO.getStartTime() == null || timeBlockDTO.getEndTime() == null) {
+            throw new IllegalArgumentException("StartTime y EndTime no pueden ser nulos.");
+        }
+
+        // 5. Actualizar campos
+        existingTimeBlock.setStartTime(Time.valueOf(timeBlockDTO.getStartTime()));
+        existingTimeBlock.setEndTime(Time.valueOf(timeBlockDTO.getEndTime()));
+        existingTimeBlock.setUpdatedAt(new Date());
+
+        return employeeScheduleTimeBlockRepository.save(existingTimeBlock);
+    }
+
+    @Transactional
+    public List<EmployeeScheduleDTO> getSchedulesByEmployeeIds(List<Long> employeeIds) {
+        // 1. Obtener horarios con días (sin timeBlocks)
+        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeIdInWithDays(employeeIds);
+
+        if (!schedules.isEmpty()) {
+            // 2. Obtener IDs de los horarios
+            List<Long> scheduleIds = schedules.stream()
+                    .map(EmployeeSchedule::getId)
+                    .collect(Collectors.toList());
+
+            // 3. Cargar timeBlocks en batch para todos los días
+            List<EmployeeScheduleDay> daysWithBlocks = employeeScheduleRepository
+                    .findDaysWithTimeBlocksByScheduleIds(scheduleIds);
+
+            // 4. Asociar los timeBlocks a los días correspondientes
+            Map<Long, List<EmployeeScheduleDay>> daysByScheduleId = daysWithBlocks.stream()
+                    .collect(Collectors.groupingBy(
+                            day -> day.getEmployeeSchedule().getId(),
+                            Collectors.toList()
+                    ));
+
+            schedules.forEach(schedule -> {
+                List<EmployeeScheduleDay> days = daysByScheduleId.get(schedule.getId());
+                if (days != null) {
+                    // Reemplazar la lista de días con los que tienen timeBlocks cargados
+                    schedule.getDays().clear();
+                    schedule.getDays().addAll(days);
+                }
+            });
+        }
+
+        return schedules.stream()
+                .map(this::convertToCompleteDTO)
+                .collect(Collectors.toList());
+    }
+    private EmployeeScheduleDTO convertToCompleteDTO(EmployeeSchedule schedule) {
+        // 1. Obtener datos del empleado desde el microservicio
+        EmployeeResponse response = getEmployeeData(schedule.getEmployeeId());
+        EmployeeResponse.Employee employee = response != null ? response.getEmployee() : null;
+
+        // 2. Construir estructura de días
+        Map<String, Object> daysStructure = buildDaysStructure(schedule);
+
+        // 3. Crear DTO con toda la información
+        return new EmployeeScheduleDTO(
+                schedule.getId(),
+                getEmployeeField(employee, EmployeeResponse.Employee::getNumberId),
+                getEmployeeField(employee, EmployeeResponse.Employee::getFirstName, "Desconocido"),
+                getEmployeeField(employee, EmployeeResponse.Employee::getSecondName, "Desconocido"),
+                getEmployeeField(employee, EmployeeResponse.Employee::getSurName, "Desconocido"),
+                getEmployeeField(employee, EmployeeResponse.Employee::getSecondSurname, "Desconocido"),
+                getEmployeeDependency(employee),
+                getEmployeePosition(employee),
+                formatDate(schedule.getStartDate()),
+                formatDate(schedule.getEndDate()),
+                buildShiftDTO(schedule.getShift()),
+                schedule.getDaysParentId(),
+                daysStructure
+        );
+    }
+
+
+    public List<EmployeeScheduleDTO> getSchedulesByDateRange(Date startDate, Date endDate) {
+        if (startDate == null) {
+            throw new IllegalArgumentException("La fecha de inicio es obligatoria.");
+        }
+
+        List<EmployeeSchedule> schedules;
+
+        if (endDate == null) {
+            // Si no se proporciona endDate, obtener registros donde endDate sea NULL
+            schedules = employeeScheduleRepository.findByStartDateAndNullEndDate(startDate);
+        } else {
+            if (startDate.after(endDate)) {
+                throw new IllegalArgumentException("La fecha de inicio debe ser anterior a la fecha de fin.");
+            }
+            schedules = employeeScheduleRepository.findByDateRange(startDate, endDate);
+        }
+
+        return schedules.stream()
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+    }
+
+    private Map<String, Object> buildDaysStructure(EmployeeSchedule schedule) {
+        Map<String, Object> daysMap = new LinkedHashMap<>();
+        daysMap.put("id", schedule.getDaysParentId());
+
+        // Ordenar días por fecha
+        List<EmployeeScheduleDay> sortedDays = schedule.getDays() != null ?
+                schedule.getDays().stream()
+                        .sorted(Comparator.comparing(EmployeeScheduleDay::getDate))
+                        .collect(Collectors.toList()) :
+                new ArrayList<>();
+
+        // Convertir días a DTO
+        List<Map<String, Object>> dayItems = sortedDays.stream()
+                .map(day -> {
+                    Map<String, Object> dayMap = new LinkedHashMap<>();
+                    dayMap.put("id", day.getId());
+                    dayMap.put("date", dateFormat.format(day.getDate()));
+                    dayMap.put("dayOfWeek", day.getDayOfWeek());
+
+                    // Convertir bloques de tiempo
+                    List<Map<String, String>> timeBlocks = day.getTimeBlocks() != null ?
+                            day.getTimeBlocks().stream()
+                                    .sorted(Comparator.comparing(EmployeeScheduleTimeBlock::getStartTime))
+                                    .map(block -> {
+                                        Map<String, String> blockMap = new LinkedHashMap<>();
+                                        blockMap.put("id", block.getId().toString());
+                                        blockMap.put("startTime", block.getStartTime().toString());
+                                        blockMap.put("endTime", block.getEndTime().toString());
+                                        return blockMap;
+                                    })
+                                    .collect(Collectors.toList()) :
+                            new ArrayList<>();
+
+                    dayMap.put("timeBlocks", timeBlocks);
+                    return dayMap;
+                })
+                .collect(Collectors.toList());
+
+        daysMap.put("items", dayItems);
+        return daysMap;
+    }
+
+    private ShiftsDTO buildShiftDTO(Shifts shift) {
+        if (shift == null) return null;
+
+        // Si tu entidad Shifts no tiene getTimeBreak() como Long, déjalo en null.
+        Long timeBreak = null;
+        // Si SÍ tienes getTimeBreak() como Long o Integer, cámbialo por:
+        // Long timeBreak = shift.getTimeBreak();
+
+        return new ShiftsDTO(
+                shift.getId(),
+                shift.getName(),
+                shift.getDescription(),
+                timeBreak,
+                Collections.emptyList() // si luego quieres mapear detalles, aquí los pones
+        );
+    }
+    private EmployeeScheduleDTO convertToDTO(EmployeeSchedule schedule) {
+        // 1. Obtener datos del empleado desde el microservicio
+        EmployeeResponse response = getEmployeeData(schedule.getEmployeeId());
+        EmployeeResponse.Employee employee = response != null ? response.getEmployee() : null;
+
+        // 2. Convertir el turno a DTO
+        ShiftsDTO shiftDTO = buildShiftDTO(schedule.getShift());
+
+        // 3. Construir estructura de días
+        Map<String, Object> daysStructure = buildDaysStructure(schedule);
+
+        // 4. Construir y retornar el DTO completo
+        return new EmployeeScheduleDTO(
+                schedule.getId(),
+                getEmployeeField(employee, EmployeeResponse.Employee::getNumberId),
+                getEmployeeField(employee, EmployeeResponse.Employee::getFirstName, "Desconocido"),
+                getEmployeeField(employee, EmployeeResponse.Employee::getSecondName, "Desconocido"),
+                getEmployeeField(employee, EmployeeResponse.Employee::getSurName, "Desconocido"),
+                getEmployeeField(employee, EmployeeResponse.Employee::getSecondSurname, "Desconocido"),
+                getEmployeeDependency(employee),
+                getEmployeePosition(employee),
+                formatDate(schedule.getStartDate()),
+                formatDate(schedule.getEndDate()),
+                shiftDTO,
+                schedule.getDaysParentId(),
+                daysStructure
+        );
+    }
+
+    private String formatDate(Date date) {
+        return date != null ? new SimpleDateFormat("yyyy-MM-dd").format(date) : null;
+    }
+
+    private <T> T getEmployeeField(EmployeeResponse.Employee employee,
+                                   Function<EmployeeResponse.Employee, T> getter) {
+        return employee != null ? getter.apply(employee) : null;
+    }
+
+    private <T> T getEmployeeField(EmployeeResponse.Employee employee,
+                                   Function<EmployeeResponse.Employee, T> getter,
+                                   T defaultValue) {
+        try {
+            return employee != null ? getter.apply(employee) : defaultValue;
+        } catch (NullPointerException e) {
+            return defaultValue;
+        }
+    }
+
+    private String getEmployeeDependency(EmployeeResponse.Employee employee) {
+        return getEmployeeField(employee,
+                e -> e.getPosition().getDependency().getName(),
+                "Sin dependencia");
+    }
+
+    private String getEmployeePosition(EmployeeResponse.Employee employee) {
+        return getEmployeeField(employee,
+                e -> e.getPosition().getName(),
+                "Sin posición");
     }
 
 }
