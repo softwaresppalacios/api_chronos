@@ -959,7 +959,33 @@ public class EmployeeScheduleService {
 
 
 
+    public EmployeeScheduleTimeBlock updateTimeBlock(TimeBlockDTO timeBlockDTO) {
+        // 1. Validate input parameters
+        validateInputParameters(timeBlockDTO);
 
+        // 2. Retrieve existing time block
+        EmployeeScheduleTimeBlock existingTimeBlock = employeeScheduleTimeBlockRepository
+                .findById(timeBlockDTO.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Time block not found with id: " + timeBlockDTO.getId()));
+
+        // 3. Validate day and parent day relationship
+        validateDayAndParentDay(existingTimeBlock, timeBlockDTO);
+
+        // 4. Validate employee permissions
+        validateEmployeePermissions(existingTimeBlock, timeBlockDTO);
+
+        // 5. Update time block details
+        updateTimeBlockDetails(existingTimeBlock, timeBlockDTO);
+
+        // 6. Save updated time block
+        EmployeeScheduleTimeBlock result = employeeScheduleTimeBlockRepository.save(existingTimeBlock);
+
+        // 7. NUEVO: Recalcular totales del grupo automáticamente
+        Long employeeId = existingTimeBlock.getEmployeeScheduleDay().getEmployeeSchedule().getEmployeeId();
+        recalculateGroupTotalsForEmployee(employeeId);
+
+        return result;
+    }
 
     private double calculateHoursBetween(String startTime, String endTime) {
         try {
@@ -1290,11 +1316,6 @@ public class EmployeeScheduleService {
             throw new IllegalArgumentException("No se encontró el turno del empleado.");
         }
 
-        // Obtener los IDs de dependencia
-
-
-
-
         // 4. Validar horas
         if (timeBlockDTO.getStartTime() == null || timeBlockDTO.getEndTime() == null) {
             throw new IllegalArgumentException("StartTime y EndTime no pueden ser nulos.");
@@ -1305,9 +1326,14 @@ public class EmployeeScheduleService {
         existingTimeBlock.setEndTime(Time.valueOf(timeBlockDTO.getEndTime()));
         existingTimeBlock.setUpdatedAt(new Date());
 
-        return employeeScheduleTimeBlockRepository.save(existingTimeBlock);
-    }
+        EmployeeScheduleTimeBlock result = employeeScheduleTimeBlockRepository.save(existingTimeBlock);
 
+        // 6. NUEVO: Recalcular totales del grupo automáticamente
+        Long employeeId = employeeSchedule.getEmployeeId();
+        recalculateGroupTotalsForEmployee(employeeId);
+
+        return result;
+    }
     @Transactional
     public List<EmployeeScheduleDTO> getSchedulesByEmployeeIds(List<Long> employeeIds) {
         // 1. Obtener horarios con días (sin timeBlocks)
@@ -1391,6 +1417,32 @@ public class EmployeeScheduleService {
         return schedules.stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
+    }
+
+
+    @Transactional
+    private void recalculateGroupTotalsForEmployee(Long employeeId) {
+        try {
+            // 1. Obtener todos los grupos ACTIVOS del empleado
+            List<ScheduleAssignmentGroupDTO> activeGroups = groupService.getEmployeeGroups(employeeId)
+                    .stream()
+                    .filter(g -> "ACTIVE".equalsIgnoreCase(g.getStatus()))
+                    .collect(Collectors.toList());
+
+            // 2. Para cada grupo activo, recalcular y actualizar
+            for (ScheduleAssignmentGroupDTO group : activeGroups) {
+                try {
+                    groupService.recalculateGroup(group.getId());
+                    System.out.println("Recalculado grupo " + group.getId() + " para empleado " + employeeId);
+                } catch (Exception e) {
+                    System.err.println("Error recalculando grupo " + group.getId() + ": " + e.getMessage());
+                }
+            }
+
+        } catch (Exception e) {
+            // Log error pero no fallar la operación principal
+            System.err.println("Error recalculando totales para empleado " + employeeId + ": " + e.getMessage());
+        }
     }
 
     private Map<String, Object> buildDaysStructure(EmployeeSchedule schedule) {

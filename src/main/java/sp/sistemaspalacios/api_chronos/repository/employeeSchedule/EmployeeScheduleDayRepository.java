@@ -4,7 +4,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
-import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
 
 import java.util.List;
@@ -22,8 +21,6 @@ public interface EmployeeScheduleDayRepository extends JpaRepository<EmployeeSch
     List<EmployeeScheduleDay> findByIdIn(List<Long> dayIds);
 
     List<EmployeeScheduleDay> findByDaysParentIdIn(List<Long> daysParentIds);
-
-
 
 
 

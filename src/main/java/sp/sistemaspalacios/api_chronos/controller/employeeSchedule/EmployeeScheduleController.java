@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.dto.EmployeeScheduleDTO;
 import sp.sistemaspalacios.api_chronos.dto.ScheduleDto.*;
+import sp.sistemaspalacios.api_chronos.dto.TimeBlockDTO;
 import sp.sistemaspalacios.api_chronos.dto.TimeBlockDependencyDTO;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
@@ -23,19 +24,67 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
-
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleDayRepository;
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleTimeBlockRepository;
 @RestController
 @RequestMapping("/api/employee-schedules")
 public class EmployeeScheduleController {
 
     private final EmployeeScheduleService employeeScheduleService;
-
-    public EmployeeScheduleController(EmployeeScheduleService employeeScheduleService) {
+    private final EmployeeScheduleDayRepository employeeScheduleDayRepository;
+    private final EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository;
+    public EmployeeScheduleController(EmployeeScheduleService employeeScheduleService,  EmployeeScheduleDayRepository employeeScheduleDayRepository,
+                                      EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository) {
         this.employeeScheduleService = employeeScheduleService;
+        this.employeeScheduleDayRepository = employeeScheduleDayRepository;
+        this.employeeScheduleTimeBlockRepository = employeeScheduleTimeBlockRepository;
+    }
+
+    @PutMapping("/time-blocks")
+    public ResponseEntity<?> updateTimeBlock(@RequestBody TimeBlockDTO timeBlockDTO) {
+        try {
+            // Validate basic input
+            validateTimeBlockInput(timeBlockDTO);
+
+            // Update time block
+            EmployeeScheduleTimeBlock updatedBlock = employeeScheduleService.updateTimeBlock(timeBlockDTO);
+
+            // Create structured response
+            Map<String, Object> response = createTimeBlockResponse(updatedBlock);
+
+            return ResponseEntity.ok(response);
+
+        } catch (ResourceNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
+        }
     }
 
 
+    private void validateTimeBlockInput(TimeBlockDTO timeBlockDTO) {
+        if (timeBlockDTO.getId() == null || timeBlockDTO.getId() <= 0) {
+            throw new IllegalArgumentException("Invalid time block ID");
+        }
+        if (timeBlockDTO.getEmployeeScheduleDayId() == null || timeBlockDTO.getEmployeeScheduleDayId() <= 0) {
+            throw new IllegalArgumentException("Invalid employee schedule day ID");
+        }
+        if (timeBlockDTO.getNumberId() == null || timeBlockDTO.getNumberId().isEmpty()) {
+            throw new IllegalArgumentException("Invalid employee identification number");
+        }
+    }
+    private Map<String, Object> createTimeBlockResponse(EmployeeScheduleTimeBlock updatedBlock) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("id", updatedBlock.getId());
+        response.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
+        response.put("startTime", updatedBlock.getStartTime() != null ? updatedBlock.getStartTime().toString() : null);
+        response.put("endTime", updatedBlock.getEndTime() != null ? updatedBlock.getEndTime().toString() : null);
+        response.put("numberId", updatedBlock.getEmployeeScheduleDay().getEmployeeSchedule().getEmployeeId().toString());
+        response.put("updatedAt", updatedBlock.getUpdatedAt());
 
+        return response;
+    }
 
 
     // =================== ENDPOINTS ===================
@@ -66,17 +115,27 @@ public class EmployeeScheduleController {
 
     @GetMapping
     public ResponseEntity<List<EmployeeScheduleDTO>> getAllSchedules() {
-        return ResponseEntity.ok(employeeScheduleService.getAllEmployeeSchedules());
+        List<EmployeeScheduleDTO> schedules = employeeScheduleService.getAllEmployeeSchedules();
+        return ResponseEntity.ok(schedules);
     }
 
+    /** 🔹 Obtiene un horario por su ID */
     @GetMapping("/{id}")
     public ResponseEntity<EmployeeScheduleDTO> getScheduleById(@PathVariable Long id) {
-        return ResponseEntity.ok(employeeScheduleService.getEmployeeScheduleById(id));
+        if (id == null || id <= 0) {
+            return ResponseEntity.badRequest().build();
+        }
+        EmployeeScheduleDTO schedule = employeeScheduleService.getEmployeeScheduleById(id);
+        return ResponseEntity.ok(schedule);
     }
 
     @GetMapping("/employee/{employeeId}")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByEmployeeId(@PathVariable Long employeeId) {
-        return ResponseEntity.ok(employeeScheduleService.getSchedulesByEmployeeId(employeeId));
+        if (employeeId == null || employeeId <= 0) {
+            return ResponseEntity.badRequest().build();
+        }
+        List<EmployeeScheduleDTO> schedules = employeeScheduleService.getSchedulesByEmployeeId(employeeId);
+        return ResponseEntity.ok(schedules);
     }
 
     @GetMapping("/by-dependency-id")
@@ -91,11 +150,6 @@ public class EmployeeScheduleController {
                 dependencyId, startDate, endDate, startTime, shiftId));
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteSchedule(@PathVariable Long id) {
-        employeeScheduleService.deleteEmployeeSchedule(id);
-        return ResponseEntity.noContent().build();
-    }
 
 
 
@@ -260,7 +314,35 @@ public class EmployeeScheduleController {
 
 
 
+    @DeleteMapping("/schedule-days/{dayId}")
+    public ResponseEntity<?> deleteCompleteScheduleDay(@PathVariable Long dayId) {
+        try {
+            // Verificar que el día existe
+            EmployeeScheduleDay day = employeeScheduleDayRepository
+                    .findById(dayId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Día de horario no encontrado con id: " + dayId));
 
+            // Primero eliminar todos los timeBlocks de este día
+            employeeScheduleTimeBlockRepository.deleteByEmployeeScheduleDayId(dayId);
+
+            // Luego eliminar el día mismo
+            employeeScheduleDayRepository.deleteById(dayId);
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Día y sus horarios eliminados completamente");
+            response.put("dayId", dayId);
+            response.put("date", day.getDate());
+
+            return ResponseEntity.ok(response);
+
+        } catch (ResourceNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error interno del servidor: " + e.getMessage());
+        }
+    }
 
 
     @PutMapping("/time-blocks/by-dependency")
@@ -308,7 +390,18 @@ public class EmployeeScheduleController {
         }
     }
 
-
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteSchedule(@PathVariable Long id) {
+        if (id == null || id <= 0) {
+            return ResponseEntity.badRequest().body("ID inválido");
+        }
+        try {
+            employeeScheduleService.deleteEmployeeSchedule(id);
+            return ResponseEntity.noContent().build();
+        } catch (ResourceNotFoundException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
     private Map<String, String> convertTimeBlockToMap(EmployeeScheduleTimeBlock block) {
         Map<String, String> blockMap = new HashMap<>();
         blockMap.put("startTime", block.getStartTime().toString());
@@ -359,21 +452,6 @@ public class EmployeeScheduleController {
             return ResponseEntity.badRequest().build();
         }
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     /** 🔹 Obtiene los horarios dentro de un rango de fechas */
     @GetMapping("/by-date-range")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDateRange(
