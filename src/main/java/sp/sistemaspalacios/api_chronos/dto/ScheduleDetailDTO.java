@@ -1,10 +1,12 @@
 package sp.sistemaspalacios.api_chronos.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.util.Map;
 
 @Data
 @NoArgsConstructor
@@ -20,6 +22,7 @@ public class ScheduleDetailDTO {
     private Long   shiftId;
     // Total del turno (regular + festivo + extra)
     private Double hoursInPeriod;
+    private Map<String, Object> overtimeBreakdown;
 
     // 🔹 Nuevos: para que el detalle muestre correctamente las columnas
     private Double regularHours;   // REGULAR_*

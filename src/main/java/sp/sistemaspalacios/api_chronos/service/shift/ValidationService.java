@@ -373,13 +373,9 @@ public class ValidationService {
                 if (crossesMidnight) {
                     throw new IllegalArgumentException("Tarde no puede cruzar medianoche");
                 }
-                // Debe finalizar antes (o igual) al inicio de noche
-                if (end.isAfter(nightStart)) {
-                    throw new IllegalArgumentException(
-                            "Tarde no debe extenderse más allá de " + formatAmPm(nightStart));
-                }
+                // Removemos la validación que impedía extenderse a horas de noche
+                // Ahora "Tarde" puede finalizar en horas de noche
                 break;
-
             case "Noche":
                 // Debe empezar desde NIGHT_START o cruzar medianoche
                 if (!crossesMidnight && start.isBefore(nightStart)) {

@@ -18,7 +18,6 @@ public class HolidayExemptionService {
         this.holidayExemptionRepository = holidayExemptionRepository;
     }
 
-    // ⬇️⬇️⬇️ CAMBIO: transacción NUEVA para aislar errores
     @org.springframework.transaction.annotation.Transactional(
             propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW
     )
@@ -36,10 +35,20 @@ public class HolidayExemptionService {
         HolidayExemption saved = holidayExemptionRepository.save(exemption);
         return convertToDTO(saved);
     }
-    // ⬆️⬆️⬆️ FIN DEL CAMBIO
 
     public boolean hasExemption(Long employeeId, LocalDate holidayDate) {
         return holidayExemptionRepository.existsByEmployeeIdAndHolidayDate(employeeId, holidayDate);
+    }
+
+
+    public String getExemptionReason(Long employeeId, LocalDate holidayDate) {
+        List<HolidayExemption> exemptions = holidayExemptionRepository.findByEmployeeIdAndHolidayDate(employeeId, holidayDate);
+
+        if (exemptions != null && !exemptions.isEmpty()) {
+            return exemptions.get(0).getExemptionReason();
+        }
+
+        return null;
     }
 
     public List<HolidayExemptionDTO> getExemptionsByEmployee(Long employeeId) {
@@ -48,6 +57,8 @@ public class HolidayExemptionService {
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
+
+
 
     private HolidayExemptionDTO convertToDTO(HolidayExemption exemption) {
         HolidayExemptionDTO dto = new HolidayExemptionDTO();

@@ -55,7 +55,6 @@ public class ShiftBusinessController {
     public ResponseEntity<ShiftBusinessDTOs.AddShiftDetailResponse> addShiftDetail(
             @RequestBody ShiftBusinessDTOs.AddShiftDetailRequest request) {
 
-        System.out.println(">>> add-detail HIT");
 
         try {
             ShiftBusinessDTOs.AddShiftDetailResponse response = shiftBusinessService.addShiftDetail(request);
