@@ -284,6 +284,14 @@ public class EmployeeScheduleService {
 
     public EmployeeHoursSummary calculateEmployeeHoursSummary(Long employeeId) {
 
+        // NUEVO: Sincronizar todos los status antes de calcular
+        try {
+            groupService.syncAllGroupStatuses();
+        } catch (Exception e) {
+            System.err.println("Error sincronizando status de grupos: " + e.getMessage());
+            // Continuar con el cálculo aunque falle la sincronización
+        }
+
         // ⬇️ Filtrar aquí SOLO los grupos ACTIVE
         List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(employeeId)
                 .stream()
@@ -356,6 +364,7 @@ public class EmployeeScheduleService {
         s.setOvertimeBreakdown(bd);
         return s;
     }
+
 
 
     // =================== VALIDAR SIN GUARDAR ===================
@@ -1031,15 +1040,26 @@ public class EmployeeScheduleService {
     public EmployeeScheduleDTO getEmployeeScheduleById(Long id) {
         EmployeeSchedule schedule = employeeScheduleRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("EmployeeSchedule not found with id: " + id));
+
+        // NUEVO: Sincronizar status de grupos antes de convertir
+        syncEmployeeGroupsStatus(schedule.getEmployeeId());
+
         return convertToDTO(schedule);
     }
-
     public List<EmployeeScheduleDTO> getSchedulesByEmployeeId(Long employeeId) {
         if (employeeId == null || employeeId <= 0) {
             throw new IllegalArgumentException("Employee ID debe ser un número válido.");
         }
 
+        // NUEVO: Sincronizar status antes de obtener horarios
+        syncEmployeeGroupsStatus(employeeId);
+
         List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(employeeId);
+
+        // NUEVO: Filtrar solo horarios de grupos activos
+        schedules = schedules.stream()
+                .filter(this::isScheduleInActiveGroup)
+                .collect(Collectors.toList());
 
         List<EmployeeScheduleDTO> result = schedules.stream()
                 .map(this::convertToDTOWithHours)
@@ -1048,6 +1068,70 @@ public class EmployeeScheduleService {
         return result;
     }
 
+
+    private void syncEmployeeGroupsStatus(Long employeeId) {
+        try {
+            List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(employeeId);
+
+            for (ScheduleAssignmentGroupDTO group : groups) {
+                // El servicio ya maneja la sincronización automática
+                // pero forzamos la verificación aquí
+                groupService.getGroupById(group.getId());
+            }
+        } catch (Exception e) {
+            // Log error pero no fallar la consulta principal
+            System.err.println("Error sincronizando status de grupos para empleado " + employeeId + ": " + e.getMessage());
+        }
+    }
+    private boolean isPeriodActive(Date startDate, Date endDate) {
+        if (startDate == null) return false;
+
+        Date today = new Date();
+
+        // Si hay fecha de fin, verificar que no haya pasado
+        if (endDate != null) {
+            return !today.before(startDate) && !today.after(endDate);
+        }
+
+        // Si no hay fecha de fin, verificar que haya empezado
+        return !today.before(startDate);
+    }
+    private boolean isScheduleInActiveGroup(EmployeeSchedule schedule) {
+        try {
+            List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(schedule.getEmployeeId());
+
+            System.out.println("=== DEBUG isScheduleInActiveGroup ===");
+            System.out.println("Schedule ID: " + schedule.getId());
+            System.out.println("Employee ID: " + schedule.getEmployeeId());
+            System.out.println("Schedule dates: " + schedule.getStartDate() + " to " + schedule.getEndDate());
+
+            for (ScheduleAssignmentGroupDTO group : groups) {
+                System.out.println("Group ID: " + group.getId() + ", Status: " + group.getStatus() +
+                        ", Period: " + group.getPeriodStart() + " to " + group.getPeriodEnd());
+                System.out.println("Group schedule IDs: " + group.getEmployeeScheduleIds());
+            }
+
+            List<ScheduleAssignmentGroupDTO> activeGroups = groups.stream()
+                    .filter(g -> "ACTIVE".equalsIgnoreCase(g.getStatus()))
+                    .collect(Collectors.toList());
+
+            System.out.println("Active groups count: " + activeGroups.size());
+
+            boolean result = activeGroups.stream()
+                    .flatMap(g -> g.getEmployeeScheduleIds().stream())
+                    .anyMatch(id -> Objects.equals(id, schedule.getId()));
+
+            System.out.println("Schedule " + schedule.getId() + " is in active group: " + result);
+            System.out.println("=== END DEBUG ===");
+
+            return result;
+
+        } catch (Exception e) {
+            System.err.println("Error in isScheduleInActiveGroup: " + e.getMessage());
+            e.printStackTrace();
+            return true; // Si hay error, permitir el horario (comportamiento seguro)
+        }
+    }
 
 
     @Transactional
@@ -1097,6 +1181,7 @@ public class EmployeeScheduleService {
         if (dependencyId == null) {
             return Collections.emptyList();
         }
+
         List<EmployeeSchedule> schedules;
 
         if (startDate != null && endDate != null && startTime != null && shiftId != null) {
@@ -1118,10 +1203,23 @@ public class EmployeeScheduleService {
             schedules = employeeScheduleRepository.findByDependencyId(dependencyId);
         }
 
+        // NUEVO: Sincronizar status de grupos para todos los empleados únicos
+        Set<Long> uniqueEmployeeIds = schedules.stream()
+                .map(EmployeeSchedule::getEmployeeId)
+                .collect(Collectors.toSet());
+
+        uniqueEmployeeIds.forEach(this::syncEmployeeGroupsStatus);
+
+        // NUEVO: Filtrar solo horarios de grupos activos
+        schedules = schedules.stream()
+                .filter(this::isScheduleInActiveGroup)
+                .collect(Collectors.toList());
+
         return schedules.stream()
-                .map(this::convertToDTOWithHours) // ya rellena hoursInPeriod
+                .map(this::convertToDTOWithHours)
                 .collect(Collectors.toList());
     }
+
 
     public List<EmployeeScheduleDTO> getSchedulesByShiftId(Long shiftId) {
         if (shiftId == null || shiftId <= 0) {
@@ -1336,11 +1434,19 @@ public class EmployeeScheduleService {
     }
     @Transactional
     public List<EmployeeScheduleDTO> getSchedulesByEmployeeIds(List<Long> employeeIds) {
+        // NUEVO: Sincronizar status de grupos para todos los empleados ANTES de filtrar
+        employeeIds.forEach(this::syncEmployeeGroupsStatus);
+
         // 1. Obtener horarios con días (sin timeBlocks)
         List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeIdInWithDays(employeeIds);
 
+        // NUEVO: Filtrar solo horarios que pertenezcan a grupos ACTIVOS
+        schedules = schedules.stream()
+                .filter(this::isScheduleInActiveGroup)
+                .collect(Collectors.toList());
+
         if (!schedules.isEmpty()) {
-            // 2. Obtener IDs de los horarios
+            // 2. Obtener IDs de los horarios filtrados
             List<Long> scheduleIds = schedules.stream()
                     .map(EmployeeSchedule::getId)
                     .collect(Collectors.toList());
@@ -1359,7 +1465,6 @@ public class EmployeeScheduleService {
             schedules.forEach(schedule -> {
                 List<EmployeeScheduleDay> days = daysByScheduleId.get(schedule.getId());
                 if (days != null) {
-                    // Reemplazar la lista de días con los que tienen timeBlocks cargados
                     schedule.getDays().clear();
                     schedule.getDays().addAll(days);
                 }

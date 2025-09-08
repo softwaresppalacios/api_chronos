@@ -76,6 +76,37 @@ public class ScheduleAssignmentGroupService {
         return convertToDTO(group, schedules, hoursByType);
     }
 
+
+    @Transactional
+    public void syncAllGroupStatuses() {
+        try {
+            List<ScheduleAssignmentGroup> allGroups = groupRepository.findAll();
+            int updatedCount = 0;
+
+            for (ScheduleAssignmentGroup group : allGroups) {
+                String currentStatus = group.getStatus();
+                String effectiveStatus = getEffectiveStatus(group);
+
+                if (!Objects.equals(currentStatus, effectiveStatus)) {
+                    group.setStatus(effectiveStatus);
+                    groupRepository.save(group);
+                    updatedCount++;
+                    log.debug("Grupo ID {} actualizado de {} a {} (empleado: {}, período: {} - {})",
+                            group.getId(), currentStatus, effectiveStatus,
+                            group.getEmployeeId(), group.getPeriodStart(), group.getPeriodEnd());
+                }
+            }
+
+            if (updatedCount > 0) {
+                log.info("Sincronización de status: {} grupos actualizados de {} totales",
+                        updatedCount, allGroups.size());
+            }
+        } catch (Exception e) {
+            log.error("Error sincronizando status de grupos: {}", e.getMessage());
+        }
+    }
+
+
     public List<ScheduleAssignmentGroupDTO> getEmployeeGroups(Long employeeId) {
         List<ScheduleAssignmentGroup> groups = groupRepository.findByEmployeeId(employeeId);
         return groups.stream()
@@ -132,12 +163,12 @@ public class ScheduleAssignmentGroupService {
             String status, String shiftName, Long employeeId,
             LocalDate startDate, LocalDate endDate) {
 
+        // AGREGAR: Sincronizar todos los status antes de filtrar
+        syncAllGroupStatuses();
+
         List<ScheduleAssignmentGroup> allGroups = groupRepository.findAll();
 
-        // Sincronizar status de todos los grupos
-        allGroups.forEach(this::syncStatusWithDates);
-
-        // Aplicar filtros directamente
+        // El resto del método permanece igual...
         return allGroups.stream()
                 .filter(group -> filterByStatus(group, status))
                 .filter(group -> filterByEmployee(group, employeeId))
@@ -146,7 +177,6 @@ public class ScheduleAssignmentGroupService {
                     try {
                         List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
 
-                        // Filtrar por nombre de turno si se especifica
                         if (shiftName != null && !shiftName.trim().isEmpty() && !"TODOS".equalsIgnoreCase(shiftName)) {
                             schedules = schedules.stream()
                                     .filter(s -> matchesShiftName(s, shiftName.trim()))

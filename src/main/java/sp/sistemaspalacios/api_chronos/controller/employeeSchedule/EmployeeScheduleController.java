@@ -16,6 +16,8 @@ import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleT
 import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
 import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleDayRepository;
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleTimeBlockRepository;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.EmployeeScheduleService;
 
 import java.text.ParseException;
@@ -24,8 +26,6 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
-import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleDayRepository;
-import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleTimeBlockRepository;
 @RestController
 @RequestMapping("/api/employee-schedules")
 public class EmployeeScheduleController {
@@ -38,6 +38,82 @@ public class EmployeeScheduleController {
         this.employeeScheduleService = employeeScheduleService;
         this.employeeScheduleDayRepository = employeeScheduleDayRepository;
         this.employeeScheduleTimeBlockRepository = employeeScheduleTimeBlockRepository;
+    }
+// AGREGAR estos endpoints a tu EmployeeScheduleController.java
+
+    @PostMapping("/timeblocks")
+    public ResponseEntity<?> createTimeBlock(@RequestBody Map<String, Object> timeBlockData) {
+        try {
+            // Validar y extraer datos
+            Long employeeScheduleDayId = Long.parseLong(timeBlockData.get("employeeScheduleDayId").toString());
+            String startTime = timeBlockData.get("startTime").toString();
+            String endTime = timeBlockData.get("endTime").toString();
+
+            // Buscar el día
+            EmployeeScheduleDay day = employeeScheduleDayRepository
+                    .findById(employeeScheduleDayId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Día no encontrado: " + employeeScheduleDayId));
+
+            // Crear bloque
+            EmployeeScheduleTimeBlock newBlock = new EmployeeScheduleTimeBlock();
+            newBlock.setEmployeeScheduleDay(day);
+            newBlock.setStartTime(java.sql.Time.valueOf(startTime));
+            newBlock.setEndTime(java.sql.Time.valueOf(endTime));
+            newBlock.setCreatedAt(new Date());
+
+            EmployeeScheduleTimeBlock savedBlock = employeeScheduleTimeBlockRepository.save(newBlock);
+
+            // Respuesta
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("id", savedBlock.getId());
+            response.put("message", "Bloque creado correctamente");
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
+        }
+    }
+
+    @DeleteMapping("/timeblocks/{timeBlockId}")
+    public ResponseEntity<?> deleteTimeBlock(@PathVariable Long timeBlockId) {
+        try {
+            System.out.println("Intentando eliminar bloque ID: " + timeBlockId);
+
+            EmployeeScheduleTimeBlock block = employeeScheduleTimeBlockRepository
+                    .findById(timeBlockId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Bloque no encontrado: " + timeBlockId));
+
+            System.out.println("Bloque encontrado: " + block.getId() +
+                    ", Día: " + block.getEmployeeScheduleDay().getId());
+
+            employeeScheduleTimeBlockRepository.deleteById(timeBlockId);
+
+            System.out.println("Bloque eliminado exitosamente");
+
+            // Devolver JSON en lugar de String
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Bloque eliminado correctamente");
+            response.put("deletedId", timeBlockId);
+
+            return ResponseEntity.ok(response);
+
+        } catch (ResourceNotFoundException e) {
+            System.err.println("Bloque no encontrado: " + e.getMessage());
+            Map<String, Object> errorResponse = new LinkedHashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+
+        } catch (Exception e) {
+            System.err.println("Error eliminando bloque: " + e.getMessage());
+            e.printStackTrace();
+            Map<String, Object> errorResponse = new LinkedHashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("error", "Error interno: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
     }
 
     @PutMapping("/time-blocks")
