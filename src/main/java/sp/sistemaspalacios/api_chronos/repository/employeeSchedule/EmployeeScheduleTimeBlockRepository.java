@@ -15,4 +15,6 @@ public interface EmployeeScheduleTimeBlockRepository extends JpaRepository<Emplo
     @Transactional
     void deleteByEmployeeScheduleDayId(Long employeeScheduleDayId);
 
+    List<EmployeeScheduleTimeBlock> findByEmployeeScheduleDayId(Long employeeScheduleDayId);
+
 }

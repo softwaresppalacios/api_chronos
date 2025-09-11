@@ -216,4 +216,7 @@ where es.id in :ids
 """)
     List<EmployeeSchedule> findAllByIdWithShiftAndEmployee(@Param("ids") List<Long> ids);
 
+
+
+
 }

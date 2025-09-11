@@ -20,6 +20,7 @@ import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeSched
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleTimeBlockRepository;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.EmployeeScheduleService;
 
+import java.sql.Time;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
@@ -222,11 +223,57 @@ public class EmployeeScheduleController {
             @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime,
             @RequestParam(required = false) Long shiftId) {
 
-        return ResponseEntity.ok(employeeScheduleService.getSchedulesByDependencyId(
-                dependencyId, startDate, endDate, startTime, shiftId));
+        // VALIDACIÓN: Solo dependencyId es obligatorio
+        if (dependencyId == null || dependencyId <= 0) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        // Log para debugging
+        System.out.println("Parámetros recibidos:");
+        System.out.println("- dependencyId: " + dependencyId);
+        System.out.println("- startDate: " + startDate);
+        System.out.println("- endDate: " + endDate);
+        System.out.println("- startTime: " + startTime);
+        System.out.println("- shiftId: " + shiftId);
+
+        try {
+            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(
+                    dependencyId, startDate, endDate, startTime, shiftId);
+
+            System.out.println("Resultado: " + result.size() + " registros encontrados");
+
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            System.err.println("Error en getSchedulesByDependencyId: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
+    @PostMapping("/cleanup-empty-days/{employeeId}")
+    public ResponseEntity<?> cleanupEmptyDaysForEmployee(@PathVariable Long employeeId) {
+        try {
+            System.out.println("Solicitud de limpieza para empleado: " + employeeId);
 
+            employeeScheduleService.cleanupEmptyDaysForEmployee(employeeId);
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Limpieza de días vacíos completada");
+            response.put("employeeId", employeeId);
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            System.err.println("Error en limpieza: " + e.getMessage());
+
+            Map<String, Object> errorResponse = new LinkedHashMap<>();
+            errorResponse.put("success", false);
+            errorResponse.put("error", e.getMessage());
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(errorResponse);
+        }
+    }
 
 
     /** 🔹 Obtiene los horarios según el turno (Shift ID) */
@@ -388,7 +435,22 @@ public class EmployeeScheduleController {
         return dayMap;
     }
 
+    @GetMapping("/by-employee-id/{employeeId}")
+    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByEmployeeId(@PathVariable String employeeId) {
+        try {
+            // Convertir string a Long
+            Long empId = Long.parseLong(employeeId);
 
+            // Usar el método existente que ya tienes
+            List<EmployeeScheduleDTO> schedules = employeeScheduleService.getSchedulesByEmployeeId(empId);
+
+            return ResponseEntity.ok(schedules);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
 
     @DeleteMapping("/schedule-days/{dayId}")
     public ResponseEntity<?> deleteCompleteScheduleDay(@PathVariable Long dayId) {
@@ -421,51 +483,237 @@ public class EmployeeScheduleController {
     }
 
 
+
+
+
+// REEMPLAZAR el método updateTimeBlocksByDependency en tu EmployeeScheduleController.java
+
     @PutMapping("/time-blocks/by-dependency")
     public ResponseEntity<?> updateTimeBlocksByDependency(@RequestBody List<TimeBlockDependencyDTO> timeBlockDTOList) {
         try {
-            // Validaciones generales (si son necesarias)
+            System.out.println("=== INICIANDO PROCESAMIENTO MEJORADO ===");
+            System.out.println("Número de bloques recibidos: " + (timeBlockDTOList != null ? timeBlockDTOList.size() : 0));
+
             if (timeBlockDTOList == null || timeBlockDTOList.isEmpty()) {
                 return ResponseEntity.badRequest().body("No se proporcionaron bloques de tiempo.");
             }
 
-            // Lista para almacenar las respuestas de los bloques de tiempo actualizados
-            List<Map<String, Object>> updatedBlocks = new ArrayList<>();
+            List<Map<String, Object>> processedBlocks = new ArrayList<>();
+            Set<Long> affectedEmployees = new HashSet<>();
+            int successCount = 0;
+            int errorCount = 0;
 
-            // Iterar sobre la lista de bloques de tiempo y actualizarlos
             for (TimeBlockDependencyDTO timeBlockDTO : timeBlockDTOList) {
-                // Validar cada bloque de tiempo individualmente (puedes reutilizar la lógica de validación existente)
-                if (timeBlockDTO.getId() == null || timeBlockDTO.getId() <= 0) {
-                    return ResponseEntity.badRequest().body("ID del bloque de tiempo inválido.");
+                try {
+                    System.out.println("Procesando bloque: ID=" + timeBlockDTO.getId() +
+                            ", DayID=" + timeBlockDTO.getEmployeeScheduleDayId() +
+                            ", Start=" + timeBlockDTO.getStartTime() +
+                            ", End=" + timeBlockDTO.getEndTime() +
+                            ", NumberId=" + timeBlockDTO.getNumberId()); // ← AGREGAR ESTA LÍNEA
+
+                    // Validaciones básicas
+                    if (timeBlockDTO.getEmployeeScheduleDayId() == null || timeBlockDTO.getEmployeeScheduleDayId() <= 0) {
+                        System.err.println("Error: employeeScheduleDayId inválido");
+                        errorCount++;
+                        continue;
+                    }
+
+                    // Obtener el día para obtener employeeId
+                    EmployeeScheduleDay day = employeeScheduleDayRepository
+                            .findById(timeBlockDTO.getEmployeeScheduleDayId())
+                            .orElse(null);
+
+                    if (day == null) {
+                        System.err.println("Error: Día no encontrado ID=" + timeBlockDTO.getEmployeeScheduleDayId());
+                        errorCount++;
+                        continue;
+                    }
+
+                    Long employeeId = day.getEmployeeSchedule().getEmployeeId();
+                    affectedEmployees.add(employeeId);
+
+                    // VALIDACIÓN ADICIONAL: Verificar que numberId coincida con employeeId
+                    if (timeBlockDTO.getNumberId() != null && !timeBlockDTO.getNumberId().equals(employeeId)) {
+                        System.err.println("ADVERTENCIA: NumberId (" + timeBlockDTO.getNumberId() +
+                                ") no coincide con EmployeeId (" + employeeId + ")");
+                    }
+
+                    // Verificar si los horarios están vacíos o son inválidos
+                    boolean shouldDelete = isInvalidTimeBlock(timeBlockDTO.getStartTime(), timeBlockDTO.getEndTime());
+
+                    if (shouldDelete) {
+                        // ELIMINAR BLOQUE
+                        if (timeBlockDTO.getId() != null && timeBlockDTO.getId() > 0) {
+                            System.out.println("Eliminando bloque ID: " + timeBlockDTO.getId());
+
+                            employeeScheduleTimeBlockRepository.deleteById(timeBlockDTO.getId());
+
+                            // Verificar si el día quedó vacío
+                            List<EmployeeScheduleTimeBlock> remainingBlocks =
+                                    employeeScheduleTimeBlockRepository.findByEmployeeScheduleDayId(day.getId());
+
+                            if (remainingBlocks.isEmpty()) {
+                                employeeScheduleDayRepository.deleteById(day.getId());
+                                System.out.println("Día eliminado: " + day.getId());
+                            }
+
+                            Map<String, Object> blockResponse = new LinkedHashMap<>();
+                            blockResponse.put("id", timeBlockDTO.getId());
+                            blockResponse.put("action", "DELETED");
+                            blockResponse.put("numberId", timeBlockDTO.getNumberId()); // ← AGREGAR ESTA LÍNEA
+                            processedBlocks.add(blockResponse);
+                        } else {
+                            System.out.println("Bloque sin ID válido para eliminar, omitiendo");
+                        }
+
+                    } else if (timeBlockDTO.getId() != null && timeBlockDTO.getId() > 0) {
+                        // ACTUALIZAR BLOQUE EXISTENTE
+                        System.out.println("Actualizando bloque existente ID: " + timeBlockDTO.getId());
+
+                        EmployeeScheduleTimeBlock existingBlock = employeeScheduleTimeBlockRepository
+                                .findById(timeBlockDTO.getId()).orElse(null);
+
+                        if (existingBlock != null) {
+                            existingBlock.setStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getStartTime())));
+                            existingBlock.setEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getEndTime())));
+                            existingBlock.setUpdatedAt(new Date());
+
+                            EmployeeScheduleTimeBlock updatedBlock = employeeScheduleTimeBlockRepository.save(existingBlock);
+
+                            Map<String, Object> blockResponse = new LinkedHashMap<>();
+                            blockResponse.put("id", updatedBlock.getId());
+                            blockResponse.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
+                            blockResponse.put("startTime", updatedBlock.getStartTime().toString());
+                            blockResponse.put("endTime", updatedBlock.getEndTime().toString());
+                            blockResponse.put("numberId", timeBlockDTO.getNumberId()); // ← AGREGAR ESTA LÍNEA
+                            blockResponse.put("action", "UPDATED");
+                            processedBlocks.add(blockResponse);
+                        } else {
+                            System.err.println("Bloque no encontrado para actualizar: " + timeBlockDTO.getId());
+                            errorCount++;
+                            continue;
+                        }
+
+                    } else {
+                        // CREAR NUEVO BLOQUE
+                        System.out.println("Creando nuevo bloque para día: " + timeBlockDTO.getEmployeeScheduleDayId());
+
+                        EmployeeScheduleTimeBlock newBlock = new EmployeeScheduleTimeBlock();
+                        newBlock.setEmployeeScheduleDay(day);
+                        newBlock.setStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getStartTime())));
+                        newBlock.setEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getEndTime())));
+                        newBlock.setCreatedAt(new Date());
+
+                        EmployeeScheduleTimeBlock savedBlock = employeeScheduleTimeBlockRepository.save(newBlock);
+
+                        Map<String, Object> blockResponse = new LinkedHashMap<>();
+                        blockResponse.put("id", savedBlock.getId());
+                        blockResponse.put("employeeScheduleDayId", savedBlock.getEmployeeScheduleDay().getId());
+                        blockResponse.put("startTime", savedBlock.getStartTime().toString());
+                        blockResponse.put("endTime", savedBlock.getEndTime().toString());
+                        blockResponse.put("numberId", timeBlockDTO.getNumberId()); // ← AGREGAR ESTA LÍNEA
+                        blockResponse.put("action", "CREATED");
+                        processedBlocks.add(blockResponse);
+                    }
+
+                    successCount++;
+
+                } catch (Exception e) {
+                    System.err.println("Error procesando bloque: " + e.getMessage());
+                    e.printStackTrace();
+                    errorCount++;
                 }
-                if (timeBlockDTO.getEmployeeScheduleDayId() == null || timeBlockDTO.getEmployeeScheduleDayId() <= 0) {
-                    return ResponseEntity.badRequest().body("ID del día asociado inválido.");
-                }
-
-
-                // Actualizar el bloque de tiempo
-                EmployeeScheduleTimeBlock updatedBlock = employeeScheduleService.updateTimeBlockByDependency(timeBlockDTO);
-
-                // Crear respuesta con la estructura solicitada para cada bloque actualizado
-                Map<String, Object> blockResponse = new LinkedHashMap<>();
-                blockResponse.put("id", updatedBlock.getId());
-                blockResponse.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
-                blockResponse.put("startTime", updatedBlock.getStartTime().toString());
-                blockResponse.put("endTime", updatedBlock.getEndTime().toString());
-
-                updatedBlocks.add(blockResponse);
             }
 
-            // Responder con todos los bloques actualizados
-            return ResponseEntity.ok(updatedBlocks);
+            // Limpiar empleados afectados
+            for (Long employeeId : affectedEmployees) {
+                try {
+                    employeeScheduleService.cleanupEmptyDaysForEmployee(employeeId);
+                    System.out.println("Limpieza completada para empleado: " + employeeId);
+                } catch (Exception e) {
+                    System.err.println("Error limpiando empleado " + employeeId + ": " + e.getMessage());
+                }
+            }
 
-        } catch (ResourceNotFoundException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
+            System.out.println("=== RESUMEN FINAL ===");
+            System.out.println("Procesados exitosamente: " + successCount);
+            System.out.println("Errores: " + errorCount);
+
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("success", true);
+            response.put("message", "Bloques procesados correctamente");
+            response.put("processedCount", successCount);
+            response.put("errorCount", errorCount);
+            response.put("processedBlocks", processedBlocks);
+            response.put("affectedEmployees", affectedEmployees.size());
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            System.err.println("Error inesperado: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Error interno del servidor: " + e.getMessage());
         }
     }
 
+// AGREGAR estos métodos auxiliares al EmployeeScheduleController.java
+
+    private boolean isInvalidTimeBlock(String startTime, String endTime) {
+        if (startTime == null || endTime == null) {
+            return true;
+        }
+
+        String start = startTime.trim();
+        String end = endTime.trim();
+
+        // Verificar si están vacíos
+        if (start.isEmpty() || end.isEmpty()) {
+            return true;
+        }
+
+        // Verificar si contienen placeholders de máscara de input
+        if (start.contains("__") || end.contains("__")) {
+            return true;
+        }
+
+        // Verificar si son horarios por defecto inválidos
+        if ("00:00:00".equals(start) && "00:00:00".equals(end)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    private String normalizeTimeString(String timeStr) {
+        if (timeStr == null || timeStr.trim().isEmpty()) {
+            throw new IllegalArgumentException("Horario no puede estar vacío");
+        }
+
+        timeStr = timeStr.trim();
+
+        // Remover placeholders de máscaras de input
+        if (timeStr.contains("__")) {
+            throw new IllegalArgumentException("Horario contiene caracteres inválidos: " + timeStr);
+        }
+
+        // Formato HH:mm:ss (ya completo)
+        if (timeStr.matches("\\d{2}:\\d{2}:\\d{2}")) {
+            return timeStr;
+        }
+
+        // Formato HH:mm (agregar segundos)
+        if (timeStr.matches("\\d{2}:\\d{2}")) {
+            return timeStr + ":00";
+        }
+
+        // Formato H:mm (agregar cero inicial)
+        if (timeStr.matches("\\d{1}:\\d{2}")) {
+            return "0" + timeStr + ":00";
+        }
+
+        throw new IllegalArgumentException("Formato de horario inválido: " + timeStr);
+    }
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteSchedule(@PathVariable Long id) {
         if (id == null || id <= 0) {
