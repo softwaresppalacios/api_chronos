@@ -206,14 +206,6 @@ public class EmployeeScheduleController {
         return ResponseEntity.ok(schedule);
     }
 
-    @GetMapping("/employee/{employeeId}")
-    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByEmployeeId(@PathVariable Long employeeId) {
-        if (employeeId == null || employeeId <= 0) {
-            return ResponseEntity.badRequest().build();
-        }
-        List<EmployeeScheduleDTO> schedules = employeeScheduleService.getSchedulesByEmployeeId(employeeId);
-        return ResponseEntity.ok(schedules);
-    }
 
     @GetMapping("/by-dependency-id")
     public ResponseEntity<List<Map<String, Object>>> getSchedulesByDependencyId(
@@ -432,16 +424,34 @@ public class EmployeeScheduleController {
         return dayMap;
     }
 
+    // En EmployeeScheduleController.java
+// En EmployeeScheduleController.java
+    @GetMapping("/employee/{employeeId}")
+    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByEmployeeId(@PathVariable Long employeeId) {
+        if (employeeId == null || employeeId <= 0) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        try {
+            // Usar el nuevo método del servicio
+            List<EmployeeScheduleDTO> schedules = employeeScheduleService.getCompleteSchedulesByEmployeeId(employeeId);
+            return ResponseEntity.ok(schedules);
+
+        } catch (Exception e) {
+            System.err.println("Error en endpoint individual: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
     @GetMapping("/by-employee-id/{employeeId}")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByEmployeeId(@PathVariable String employeeId) {
         try {
-            // Convertir string a Long
             Long empId = Long.parseLong(employeeId);
 
-            // Usar el método existente que ya tienes
-            List<EmployeeScheduleDTO> schedules = employeeScheduleService.getSchedulesByEmployeeId(empId);
-
+            // Usar el nuevo método del servicio
+            List<EmployeeScheduleDTO> schedules = employeeScheduleService.getCompleteSchedulesByEmployeeId(empId);
             return ResponseEntity.ok(schedules);
+
         } catch (NumberFormatException e) {
             return ResponseEntity.badRequest().build();
         } catch (Exception e) {

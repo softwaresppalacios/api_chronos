@@ -18,7 +18,7 @@ public class EmployeeSchedule {
 
     private Long employeeId;
 
-    @ManyToOne(fetch = FetchType.EAGER)
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "shift_id", nullable = false)
     private Shifts shift;
 

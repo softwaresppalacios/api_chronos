@@ -47,7 +47,9 @@ public class EmployeeScheduleService {
     private final Map<Long, EmployeeResponse> employeeDataCache = new ConcurrentHashMap<>();
 
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-
+    private final Map<Long, EmployeeResponse> employeeCache = new ConcurrentHashMap<>();
+    private final Map<Long, Long> cacheTimestamps = new ConcurrentHashMap<>();
+    private static final long CACHE_DURATION = 30 * 60 * 1000; // 30 minutos
     public EmployeeScheduleService(
             EmployeeScheduleRepository employeeScheduleRepository,
             ShiftsRepository shiftsRepository,
@@ -740,21 +742,14 @@ public class EmployeeScheduleService {
         return convertToDTO(schedule);
     }
 
-    public List<EmployeeScheduleDTO> getSchedulesByEmployeeId(Long employeeId) {
-        return getSchedulesByEmployeeId(employeeId, false);
-    }
 
     public List<EmployeeScheduleDTO> getSchedulesByEmployeeId(Long employeeId, boolean onlyActiveGroups) {
         if (employeeId == null || employeeId <= 0) {
             throw new IllegalArgumentException("Employee ID debe ser un número válido.");
         }
 
-
-        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(employeeId);
-
-
-
-        return schedules.stream().map(this::convertToDTO).collect(Collectors.toList());
+        // USAR EL MÉTODO QUE CARGA DATOS COMPLETOS
+        return getSchedulesByEmployeeIds(Arrays.asList(employeeId));
     }
     private void syncEmployeeGroupsStatus(Long employeeId) {
         try {
@@ -773,28 +768,35 @@ public class EmployeeScheduleService {
         employeeScheduleRepository.deleteById(id);
     }
 
-    private EmployeeScheduleDTO convertToDTOWithHours(EmployeeSchedule schedule) {
-        EmployeeScheduleDTO dto = convertToDTO(schedule);
-        try {
-            ScheduleDetailDTO detailWithHours = groupService.createScheduleDetailWithCalculation(schedule);
-            dto.setHoursInPeriod(detailWithHours.getHoursInPeriod());
-        } catch (Exception e) {
-            dto.setHoursInPeriod(0.0);
-        }
-        return dto;
-    }
 
     public EmployeeResponse getEmployeeData(Long employeeId) {
         if (employeeId == null) return null;
+
+        // Verificar cache
+        Long timestamp = cacheTimestamps.get(employeeId);
+        if (timestamp != null && (System.currentTimeMillis() - timestamp) < CACHE_DURATION) {
+            return employeeCache.get(employeeId);
+        }
+
+        // Llamada HTTP solo si no está en cache o expiró
         try {
             String url = "http://192.168.23.3:40020/api/employees/bynumberid/" + employeeId;
             ResponseEntity<EmployeeResponse> response = restTemplate.exchange(
                     url, HttpMethod.GET, new HttpEntity<>(null), EmployeeResponse.class
             );
-            if (response.getStatusCode().is2xxSuccessful()) return response.getBody();
+            if (response.getStatusCode().is2xxSuccessful()) {
+                EmployeeResponse result = response.getBody();
+                // Guardar en cache
+                employeeCache.put(employeeId, result);
+                cacheTimestamps.put(employeeId, System.currentTimeMillis());
+                return result;
+            }
         } catch (Exception ignored) { }
         return null;
     }
+
+    // Limpiar cache periódicamente
+
 
 
 
@@ -808,7 +810,7 @@ public class EmployeeScheduleService {
     ) {
         if (dependencyId == null) return Collections.emptyList();
 
-        // Consulta optimizada
+        // Usar las consultas que SÍ funcionan
         List<EmployeeSchedule> schedules;
         if (shiftId != null) {
             schedules = employeeScheduleRepository.findByDependencyIdAndShiftId(dependencyId, shiftId);
@@ -818,41 +820,73 @@ public class EmployeeScheduleService {
 
         if (schedules.isEmpty()) return Collections.emptyList();
 
-        // RESTAURAR SOLO LA AGRUPACIÓN, sin la lógica de grupos activos
         return groupSchedulesByShiftAndDependency(schedules);
     }
-    // MÉTODO NUEVO para agrupar en el backend
+    // NUEVO MÉTODO que incluye los datos
+
+
     private List<Map<String, Object>> groupSchedulesByShiftAndDependency(List<EmployeeSchedule> schedules) {
         Map<String, Map<String, Object>> groupMap = new LinkedHashMap<>();
 
+        // PASO 1: Obtener empleados únicos
+        Set<Long> uniqueEmployeeIds = schedules.stream()
+                .map(EmployeeSchedule::getEmployeeId)
+                .collect(Collectors.toSet());
+
+        // PASO 2: Llamadas HTTP PARALELAS
+        Map<Long, EmployeeResponse> employeeCache = uniqueEmployeeIds.parallelStream()
+                .collect(Collectors.toConcurrentMap(
+                        id -> id,
+                        this::getEmployeeData
+                ));
+
+        // PASO 3: Cargar días con timeBlocks SOLO para los schedules que los necesiten
+        List<Long> scheduleIds = schedules.stream()
+                .map(EmployeeSchedule::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+        Map<Long, List<EmployeeScheduleDay>> daysByScheduleId = new HashMap<>();
+        if (!scheduleIds.isEmpty()) {
+            try {
+                // Esta consulta SÍ funciona porque no hace fetch múltiple
+                List<EmployeeScheduleDay> daysWithBlocks =
+                        employeeScheduleRepository.findDaysWithTimeBlocksByScheduleIds(scheduleIds);
+
+                daysByScheduleId = daysWithBlocks.stream()
+                        .collect(Collectors.groupingBy(
+                                day -> day.getEmployeeSchedule().getId(),
+                                Collectors.toList()
+                        ));
+            } catch (Exception e) {
+                System.err.println("Error cargando días: " + e.getMessage());
+                // Continuar sin días si hay error
+            }
+        }
+
+        // PASO 4: Procesamiento con datos completos cuando están disponibles
         for (EmployeeSchedule schedule : schedules) {
             String shiftId = schedule.getShift() != null ? schedule.getShift().getId().toString() : "null";
 
-            // OBTENER DEPENDENCIA DE LOS DATOS DEL EMPLEADO (como antes)
-            EmployeeResponse employeeResponse = getEmployeeData(schedule.getEmployeeId());
+            EmployeeResponse employeeResponse = employeeCache.get(schedule.getEmployeeId());
             EmployeeResponse.Employee employee = employeeResponse != null ? employeeResponse.getEmployee() : null;
             String dependency = getEmployeeDependency(employee);
 
             String groupKey = shiftId + "::" + dependency;
 
-            // Crear grupo si no existe
             if (!groupMap.containsKey(groupKey)) {
                 Map<String, Object> group = new LinkedHashMap<>();
-
-                // Información del shift
                 Map<String, Object> shiftInfo = new LinkedHashMap<>();
                 if (schedule.getShift() != null) {
                     shiftInfo.put("id", schedule.getShift().getId());
                     shiftInfo.put("name", schedule.getShift().getName());
                     shiftInfo.put("description", schedule.getShift().getDescription());
                 }
-
                 group.put("shift", shiftInfo);
-                group.put("dependency", dependency); // Usar la dependencia del empleado
+                group.put("dependency", dependency);
                 group.put("employeeCount", 0);
                 group.put("employees", new ArrayList<>());
                 group.put("employeeIds", new HashSet<Long>());
-
                 groupMap.put(groupKey, group);
             }
 
@@ -862,11 +896,9 @@ public class EmployeeScheduleService {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> employees = (List<Map<String, Object>>) group.get("employees");
 
-            // Solo agregar si es un empleado nuevo para este grupo
             if (!employeeIds.contains(schedule.getEmployeeId())) {
                 employeeIds.add(schedule.getEmployeeId());
 
-                // Crear objeto del empleado (reutilizar la misma lógica)
                 Map<String, Object> employeeData = new LinkedHashMap<>();
                 employeeData.put("id", schedule.getEmployeeId());
                 employeeData.put("numberId", schedule.getEmployeeId());
@@ -874,9 +906,22 @@ public class EmployeeScheduleService {
                 employeeData.put("surName", getEmployeeField(employee, EmployeeResponse.Employee::getSurName, ""));
                 employeeData.put("shift", group.get("shift"));
 
-                // Procesar días
-                Map<String, Object> daysStructure = buildDaysStructure(schedule);
-                employeeData.put("days", daysStructure);
+                // Intentar usar los días cargados, o crear estructura vacía
+                List<EmployeeScheduleDay> scheduleDays = daysByScheduleId.get(schedule.getId());
+                if (scheduleDays != null && !scheduleDays.isEmpty()) {
+                    // Asignar temporalmente para usar buildDaysStructure
+                    List<EmployeeScheduleDay> originalDays = schedule.getDays();
+                    schedule.setDays(scheduleDays);
+                    employeeData.put("days", buildDaysStructure(schedule));
+                    schedule.setDays(originalDays); // Restaurar original
+                } else {
+                    // Estructura vacía por defecto
+                    Map<String, Object> daysStructure = new LinkedHashMap<>();
+                    daysStructure.put("id", schedule.getDaysParentId());
+                    daysStructure.put("items", new ArrayList<>());
+                    employeeData.put("days", daysStructure);
+                }
+
                 employeeData.put("startDate", formatDate(schedule.getStartDate()));
                 employeeData.put("endDate", formatDate(schedule.getEndDate()));
 
@@ -889,10 +934,6 @@ public class EmployeeScheduleService {
                 .peek(group -> group.remove("employeeIds"))
                 .collect(Collectors.toList());
     }
-
-
-
-
     public List<EmployeeScheduleDTO> getSchedulesByShiftId(Long shiftId) {
         if (shiftId == null || shiftId <= 0) {
             throw new IllegalArgumentException("Shift ID debe ser un número válido.");
@@ -1181,7 +1222,7 @@ public class EmployeeScheduleService {
                 daysStructure
         );
     }
-    private EmployeeScheduleDTO convertToCompleteDTO(EmployeeSchedule schedule) {
+    public EmployeeScheduleDTO convertToCompleteDTO(EmployeeSchedule schedule) {
         EmployeeResponse response = getEmployeeData(schedule.getEmployeeId());
         EmployeeResponse.Employee employee = response != null ? response.getEmployee() : null;
 
@@ -1204,6 +1245,57 @@ public class EmployeeScheduleService {
         );
     }
 
+
+    // En EmployeeScheduleService.java - agrega este método
+    public List<EmployeeScheduleDTO> getCompleteSchedulesByEmployeeId(Long employeeId) {
+        if (employeeId == null || employeeId <= 0) {
+            throw new IllegalArgumentException("Employee ID debe ser un número válido.");
+        }
+
+        try {
+            // Usar la nueva consulta optimizada
+            List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeIdWithDaysAndShift(employeeId);
+
+            if (schedules.isEmpty()) {
+                return Collections.emptyList();
+            }
+
+            // Cargar timeBlocks en una segunda consulta optimizada
+            List<Long> scheduleIds = schedules.stream()
+                    .map(EmployeeSchedule::getId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            if (!scheduleIds.isEmpty()) {
+                List<EmployeeScheduleDay> daysWithBlocks =
+                        employeeScheduleRepository.findDaysWithTimeBlocksByScheduleIds(scheduleIds);
+
+                // Asociar timeBlocks a los días
+                Map<Long, List<EmployeeScheduleDay>> daysByScheduleId = daysWithBlocks.stream()
+                        .collect(Collectors.groupingBy(
+                                day -> day.getEmployeeSchedule().getId(),
+                                Collectors.toList()
+                        ));
+
+                for (EmployeeSchedule schedule : schedules) {
+                    List<EmployeeScheduleDay> days = daysByScheduleId.get(schedule.getId());
+                    if (days != null) {
+                        schedule.getDays().clear();
+                        schedule.getDays().addAll(days);
+                    }
+                }
+            }
+
+            // Convertir a DTO completo
+            return schedules.stream()
+                    .map(this::convertToCompleteDTO)
+                    .collect(Collectors.toList());
+
+        } catch (Exception e) {
+            System.err.println("Error en consulta individual: " + e.getMessage());
+            throw new RuntimeException("Error cargando horarios del empleado", e);
+        }
+    }
     private String formatDate(Date date) {
         return date != null ? toLocalDate(date).format(DATE_FMT) : null;
     }
