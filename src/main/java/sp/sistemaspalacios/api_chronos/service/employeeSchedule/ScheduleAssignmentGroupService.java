@@ -487,4 +487,70 @@ public class ScheduleAssignmentGroupService {
         if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
         return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
     }
+
+
+
+    /**
+     * Versión optimizada que NO calcula horas ni actualiza status
+     * Solo devuelve los IDs de schedules activos
+     */
+    public List<Long> getActiveScheduleIdsForEmployee(Long employeeId) {
+        List<ScheduleAssignmentGroup> groups = groupRepository.findByEmployeeId(employeeId);
+
+        return groups.stream()
+                .filter(group -> isGroupActive(group))  // Sin actualizar BD
+                .flatMap(group -> group.getEmployeeScheduleIds().stream())
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Versión lightweight de getEmployeeGroups sin cálculos pesados
+     */
+    public List<ScheduleAssignmentGroupDTO> getEmployeeGroupsLightweight(Long employeeId) {
+        List<ScheduleAssignmentGroup> groups = groupRepository.findByEmployeeId(employeeId);
+
+        return groups.stream()
+                .map(this::convertGroupToLightweightDTO)  // Sin cargar schedules ni calcular horas
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Determinar si un grupo está activo sin actualizar la base de datos
+     */
+    private boolean isGroupActive(ScheduleAssignmentGroup group) {
+        if (group.getPeriodEnd() == null) return true;
+
+        LocalDate today = LocalDate.now();
+        LocalDate endDate = convertToLocalDate(group.getPeriodEnd());
+
+        return !today.isAfter(endDate);
+    }
+
+    /**
+     * Conversión lightweight sin cargar schedules ni calcular horas
+     */
+    private ScheduleAssignmentGroupDTO convertGroupToLightweightDTO(ScheduleAssignmentGroup group) {
+        ScheduleAssignmentGroupDTO dto = new ScheduleAssignmentGroupDTO();
+
+        dto.setId(group.getId());
+        dto.setEmployeeId(group.getEmployeeId());
+        dto.setPeriodStart(dateFormat.format(group.getPeriodStart()));
+        dto.setPeriodEnd(dateFormat.format(group.getPeriodEnd()));
+        dto.setEmployeeScheduleIds(group.getEmployeeScheduleIds());
+        dto.setStatus(isGroupActive(group) ? "ACTIVE" : "INACTIVE");  // Sin actualizar BD
+
+        // Totales desde la BD (pueden estar desactualizados pero son rápidos)
+        dto.setTotalHours(group.getTotalHours() != null ? group.getTotalHours() : BigDecimal.ZERO);
+        dto.setRegularHours(group.getRegularHours() != null ? group.getRegularHours() : BigDecimal.ZERO);
+        dto.setOvertimeHours(group.getOvertimeHours() != null ? group.getOvertimeHours() : BigDecimal.ZERO);
+        dto.setFestivoHours(group.getFestivoHours() != null ? group.getFestivoHours() : BigDecimal.ZERO);
+        dto.setAssignedHours(dto.getRegularHours().add(dto.getFestivoHours()));
+
+        dto.setOvertimeType(group.getOvertimeType());
+        dto.setFestivoType(group.getFestivoType());
+        dto.setOvertimeBreakdown(new HashMap<>()); // Vacío para versión lightweight
+        dto.setScheduleDetails(Collections.emptyList()); // Vacío para versión lightweight
+
+        return dto;
+    }
 }

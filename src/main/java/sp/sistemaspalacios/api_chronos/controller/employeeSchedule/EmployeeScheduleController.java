@@ -216,19 +216,17 @@ public class EmployeeScheduleController {
     }
 
     @GetMapping("/by-dependency-id")
-    public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByDependencyId(
+    public ResponseEntity<List<Map<String, Object>>> getSchedulesByDependencyId(
             @RequestParam Long dependencyId,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
             @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime,
             @RequestParam(required = false) Long shiftId) {
 
-        // VALIDACIÓN: Solo dependencyId es obligatorio
         if (dependencyId == null || dependencyId <= 0) {
             return ResponseEntity.badRequest().build();
         }
 
-        // Log para debugging
         System.out.println("Parámetros recibidos:");
         System.out.println("- dependencyId: " + dependencyId);
         System.out.println("- startDate: " + startDate);
@@ -237,10 +235,10 @@ public class EmployeeScheduleController {
         System.out.println("- shiftId: " + shiftId);
 
         try {
-            List<EmployeeScheduleDTO> result = employeeScheduleService.getSchedulesByDependencyId(
+            List<Map<String, Object>> result = employeeScheduleService.getSchedulesByDependencyId(
                     dependencyId, startDate, endDate, startTime, shiftId);
 
-            System.out.println("Resultado: " + result.size() + " registros encontrados");
+            System.out.println("Resultado: " + result.size() + " grupos encontrados");
 
             return ResponseEntity.ok(result);
         } catch (Exception e) {
@@ -249,7 +247,6 @@ public class EmployeeScheduleController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
-
     @PostMapping("/cleanup-empty-days/{employeeId}")
     public ResponseEntity<?> cleanupEmptyDaysForEmployee(@PathVariable Long employeeId) {
         try {
@@ -451,6 +448,9 @@ public class EmployeeScheduleController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
+
+
+
 
     @DeleteMapping("/schedule-days/{dayId}")
     public ResponseEntity<?> deleteCompleteScheduleDay(@PathVariable Long dayId) {
