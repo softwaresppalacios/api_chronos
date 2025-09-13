@@ -159,35 +159,34 @@ public class ScheduleAssignmentGroupService {
         groupRepository.deleteById(groupId);
     }
 
+    // REEMPLAZAR el método getAllScheduleGroupsWithFilters en ScheduleAssignmentGroupService
+
     public List<ScheduleAssignmentGroupDTO> getAllScheduleGroupsWithFilters(
             String status, String shiftName, Long employeeId,
             LocalDate startDate, LocalDate endDate) {
 
-        // AGREGAR: Sincronizar todos los status antes de filtrar
-        syncAllGroupStatuses();
-
+        // 🔹 NO SINCRONIZAR TODOS - solo filtrar por status actual
         List<ScheduleAssignmentGroup> allGroups = groupRepository.findAll();
 
-        // El resto del método permanece igual...
-        return allGroups.stream()
-                .filter(group -> filterByStatus(group, status))
+        // 🔹 FILTRADO RÁPIDO SIN CÁLCULOS PESADOS
+        List<ScheduleAssignmentGroup> filteredGroups = allGroups.stream()
+                .filter(group -> filterByStatusFast(group, status))
                 .filter(group -> filterByEmployee(group, employeeId))
                 .filter(group -> filterByDateRange(group, startDate, endDate))
+                .collect(Collectors.toList());
+
+        // 🔹 LIMITAR RESULTADOS PARA EVITAR SOBRECARGA
+        if (filteredGroups.size() > 100) {
+            filteredGroups = filteredGroups.stream()
+                    .limit(100)
+                    .collect(Collectors.toList());
+        }
+
+        // 🔹 PROCESAMIENTO OPTIMIZADO
+        return filteredGroups.stream()
                 .map(group -> {
                     try {
-                        List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
-
-                        if (shiftName != null && !shiftName.trim().isEmpty() && !"TODOS".equalsIgnoreCase(shiftName)) {
-                            schedules = schedules.stream()
-                                    .filter(s -> matchesShiftName(s, shiftName.trim()))
-                                    .collect(Collectors.toList());
-
-                            if (schedules.isEmpty()) return null;
-                        }
-
-                        Map<String, BigDecimal> hoursByType = hourClassificationService.classifyScheduleHours(schedules);
-                        return convertToDTO(group, schedules, hoursByType);
-
+                        return convertToFastDTO(group, shiftName);
                     } catch (Exception e) {
                         log.error("Error procesando grupo {}: {}", group.getId(), e.getMessage());
                         return null;
@@ -195,6 +194,117 @@ public class ScheduleAssignmentGroupService {
                 })
                 .filter(Objects::nonNull)
                 .collect(Collectors.toList());
+    }
+
+    // 🔹 MÉTODO RÁPIDO PARA DETERMINAR STATUS SIN ACTUALIZAR BD
+    private boolean filterByStatusFast(ScheduleAssignmentGroup group, String status) {
+        if (status == null || status.trim().isEmpty() || "TODOS".equalsIgnoreCase(status)) {
+            return true;
+        }
+
+        // Calcular status efectivo SIN guardar en BD
+        String effectiveStatus = calculateEffectiveStatus(group);
+        return status.equalsIgnoreCase(effectiveStatus);
+    }
+
+    private String calculateEffectiveStatus(ScheduleAssignmentGroup group) {
+        if (group.getPeriodEnd() == null) return "ACTIVE";
+
+        LocalDate today = LocalDate.now();
+        LocalDate endDate = convertToLocalDate(group.getPeriodEnd());
+
+        return today.isAfter(endDate) ? "INACTIVE" : "ACTIVE";
+    }
+
+    // 🔹 CONVERSIÓN RÁPIDA SIN CÁLCULOS DE HORAS COMPLEJOS
+    private ScheduleAssignmentGroupDTO convertToFastDTO(ScheduleAssignmentGroup group, String shiftNameFilter) {
+        // Usar datos existentes del grupo (pueden estar un poco desactualizados pero son rápidos)
+        ScheduleAssignmentGroupDTO dto = new ScheduleAssignmentGroupDTO();
+
+        dto.setId(group.getId());
+        dto.setEmployeeId(group.getEmployeeId());
+        dto.setPeriodStart(dateFormat.format(group.getPeriodStart()));
+        dto.setPeriodEnd(dateFormat.format(group.getPeriodEnd()));
+        dto.setEmployeeScheduleIds(group.getEmployeeScheduleIds());
+        dto.setStatus(calculateEffectiveStatus(group));
+
+        // Usar totales ya calculados de la BD (rápido)
+        dto.setTotalHours(group.getTotalHours() != null ? group.getTotalHours() : BigDecimal.ZERO);
+        dto.setRegularHours(group.getRegularHours() != null ? group.getRegularHours() : BigDecimal.ZERO);
+        dto.setOvertimeHours(group.getOvertimeHours() != null ? group.getOvertimeHours() : BigDecimal.ZERO);
+        dto.setFestivoHours(group.getFestivoHours() != null ? group.getFestivoHours() : BigDecimal.ZERO);
+        dto.setAssignedHours(dto.getRegularHours().add(dto.getFestivoHours()));
+
+        dto.setOvertimeType(group.getOvertimeType());
+        dto.setFestivoType(group.getFestivoType());
+
+        // Crear breakdown básico
+        Map<String, Object> breakdown = new HashMap<>();
+        breakdown.put("total_diurna", dto.getRegularHours().doubleValue());
+        breakdown.put("total_nocturna", dto.getOvertimeHours().doubleValue());
+        dto.setOvertimeBreakdown(breakdown);
+
+        // AGREGAR NOMBRE DEL TURNO
+        List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
+        if (!schedules.isEmpty() && schedules.get(0).getShift() != null) {
+            String shiftName = getShiftDisplayName(schedules.get(0).getShift());
+            dto.setShiftName(shiftName != null ? shiftName : "Sin turno");
+        } else {
+            dto.setShiftName("Sin turno");
+        }
+
+        // SOLO cargar schedule details si realmente se necesitan (para filtro de turno)
+        if (needsScheduleDetails(shiftNameFilter)) {
+            // Aplicar filtro de turno
+            if (shiftNameFilter != null && !shiftNameFilter.trim().isEmpty() && !"TODOS".equalsIgnoreCase(shiftNameFilter)) {
+                schedules = schedules.stream()
+                        .filter(s -> matchesShiftName(s, shiftNameFilter.trim()))
+                        .collect(Collectors.toList());
+
+                if (schedules.isEmpty()) return null; // Filtrar este grupo
+            }
+
+            // Crear detalles básicos
+            List<ScheduleDetailDTO> details = schedules.stream()
+                    .map(this::createBasicScheduleDetail)
+                    .collect(Collectors.toList());
+            dto.setScheduleDetails(details);
+        } else {
+            dto.setScheduleDetails(Collections.emptyList());
+        }
+
+        return dto;
+    }
+    private boolean needsScheduleDetails(String shiftNameFilter) {
+        return shiftNameFilter != null && !shiftNameFilter.trim().isEmpty() && !"TODOS".equalsIgnoreCase(shiftNameFilter);
+    }
+
+    // 🔹 CREACIÓN BÁSICA DE DETALLES SIN CÁLCULOS COMPLEJOS
+    private ScheduleDetailDTO createBasicScheduleDetail(EmployeeSchedule schedule) {
+        ScheduleDetailDTO detail = new ScheduleDetailDTO();
+
+        detail.setScheduleId(schedule.getId());
+        detail.setStartDate(dateFormat.format(schedule.getStartDate()));
+        detail.setEndDate(dateFormat.format(schedule.getEndDate() != null ? schedule.getEndDate() : schedule.getStartDate()));
+
+        if (schedule.getShift() != null) {
+            detail.setShiftId(schedule.getShift().getId());
+            String name = getShiftDisplayName(schedule.getShift());
+            detail.setShiftName((name != null && !name.isBlank()) ? name : "Turno #" + schedule.getShift().getId());
+        } else {
+            detail.setShiftName("Sin turno");
+        }
+
+        // Valores por defecto - se calcularán bajo demanda si es necesario
+        detail.setHoursInPeriod(0.0);
+        detail.setRegularHours(0.0);
+        detail.setOvertimeHours(0.0);
+        detail.setFestivoHours(0.0);
+        detail.setOvertimeType(null);
+        detail.setFestivoType(null);
+        detail.setOvertimeBreakdown(new HashMap<>());
+
+        return detail;
     }
 
     public List<Map<String, String>> getAvailableStatuses() {

@@ -27,7 +27,7 @@ public class ScheduleAssignmentGroupDTO {
     private String festivoType;        // tipo predominante festivo ("Festivo" o "Festivo Nocturno")
 
     private String status;
-
+    private String shiftName;
     // NUEVO: "Horas asignadas" = regularHours (se llena en el Service)
     private BigDecimal assignedHours;
 

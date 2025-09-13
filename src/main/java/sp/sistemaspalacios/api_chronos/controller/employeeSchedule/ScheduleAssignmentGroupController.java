@@ -167,22 +167,41 @@ public class ScheduleAssignmentGroupController {
     }
 
 
+// MODIFICAR el endpoint en ScheduleAssignmentGroupController
+
     @GetMapping
     public ResponseEntity<?> getAllScheduleGroups(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String shiftName,
             @RequestParam(required = false) Long employeeId,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
-            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate) {
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
 
         try {
-            List<ScheduleAssignmentGroupDTO> groups = groupService.getAllScheduleGroupsWithFilters(
+            // Limitar el tamaño máximo para evitar sobrecarga
+            if (size > 100) size = 100;
+
+            List<ScheduleAssignmentGroupDTO> allGroups = groupService.getAllScheduleGroupsWithFilters(
                     status, shiftName, employeeId, startDate, endDate);
+
+            // Aplicar paginación manual
+            int totalGroups = allGroups.size();
+            int startIndex = page * size;
+            int endIndex = Math.min(startIndex + size, totalGroups);
+
+            List<ScheduleAssignmentGroupDTO> pagedGroups = allGroups.subList(startIndex, endIndex);
 
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
-            response.put("totalGroups", groups.size());
-            response.put("groups", groups);
+            response.put("totalGroups", totalGroups);
+            response.put("groups", pagedGroups);
+            response.put("page", page);
+            response.put("size", size);
+            response.put("totalPages", (int) Math.ceil((double) totalGroups / size));
+            response.put("hasNext", endIndex < totalGroups);
+            response.put("hasPrevious", page > 0);
 
             return ResponseEntity.ok(response);
 
@@ -191,7 +210,6 @@ public class ScheduleAssignmentGroupController {
                     .body(Map.of("error", e.getMessage()));
         }
     }
-
 
     @GetMapping("/available-statuses")
     public ResponseEntity<List<Map<String, String>>> getAvailableStatuses() {

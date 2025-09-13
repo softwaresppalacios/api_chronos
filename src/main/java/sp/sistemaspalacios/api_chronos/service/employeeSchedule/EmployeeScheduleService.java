@@ -1185,7 +1185,13 @@ public class EmployeeScheduleService {
 
     private ShiftsDTO buildShiftDTO(Shifts shift) {
         if (shift == null) return null;
-        Long timeBreak = null; // si luego expones getTimeBreak(), úsalo aquí
+
+        System.out.println("=== DEBUG SHIFT ===");
+        System.out.println("Shift ID: " + shift.getId());
+        System.out.println("Shift Name: " + shift.getName());
+        System.out.println("Shift Description: " + shift.getDescription());
+
+        Long timeBreak = null;
         return new ShiftsDTO(
                 shift.getId(),
                 shift.getName(),
@@ -1254,8 +1260,16 @@ public class EmployeeScheduleService {
 
         try {
             // Usar la nueva consulta optimizada
-            List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeIdWithDaysAndShift(employeeId);
-
+            List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(employeeId);
+// Cargar shifts explícitamente
+            for (EmployeeSchedule schedule : schedules) {
+                if (schedule.getShift() != null && schedule.getShift().getId() != null) {
+                    Shifts fullShift = shiftsRepository.findById(schedule.getShift().getId()).orElse(null);
+                    if (fullShift != null) {
+                        schedule.setShift(fullShift);
+                    }
+                }
+            }
             if (schedules.isEmpty()) {
                 return Collections.emptyList();
             }
