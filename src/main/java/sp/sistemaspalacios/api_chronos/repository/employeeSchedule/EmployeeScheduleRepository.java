@@ -21,58 +21,61 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
             """, nativeQuery = true)
     List<EmployeeSchedule> findByEmployeeId(@Param("employeeId") Long employeeId);
 
-    List<EmployeeSchedule> findByShiftId(Long shiftId);
-
-    // CONSULTA OPTIMIZADA PRINCIPAL - SIN JOINs innecesarios
-    @Query("SELECT es FROM EmployeeSchedule es " +
-            "WHERE es.shift.id IN (" +
-            "  SELECT s.id FROM Shifts s WHERE s.dependencyId = :dependencyId" +
-            ")")
-    List<EmployeeSchedule> findByDependencyId(@Param("dependencyId") Long dependencyId);
 
 
-    // CONSULTAS CON FILTROS - OPTIMIZADAS
-    @Query("SELECT es FROM EmployeeSchedule es " +
-            "WHERE es.shift.id IN (" +
-            "  SELECT s.id FROM Shifts s WHERE s.dependencyId = :dependencyId" +
-            ") " +
-            "AND es.shift.id = :shiftId")
-    List<EmployeeSchedule> findByDependencyIdAndShiftId(
-            @Param("dependencyId") Long dependencyId,
-            @Param("shiftId") Long shiftId);
 
 
-    @Query("SELECT es FROM EmployeeSchedule es JOIN FETCH es.shift WHERE es.id IN :ids")
+
+
+
+    // Agregar estos métodos al EmployeeScheduleRepository
+
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.employeeId = :employeeId " +
+            "AND (es.endDate IS NULL OR es.endDate >= CURRENT_DATE)")
+    List<EmployeeSchedule> findActiveByEmployeeId(@Param("employeeId") Long employeeId);
+
+    @Query("SELECT es FROM EmployeeSchedule es LEFT JOIN FETCH es.shift s LEFT JOIN FETCH s.shiftDetails " +
+            "WHERE es.id IN :ids")
     List<EmployeeSchedule> findAllByIdWithShift(@Param("ids") List<Long> ids);
 
-    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
-            "LEFT JOIN FETCH es.days d " +
-            "WHERE es.employeeId IN :employeeIds " +
-            "ORDER BY es.id, d.date")
-    List<EmployeeSchedule> findByEmployeeIdInWithDays(@Param("employeeIds") List<Long> employeeIds);
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.employeeId = :employeeId " +
+            "AND es.startDate <= :endDate AND (es.endDate IS NULL OR es.endDate >= :startDate)")
+    List<EmployeeSchedule> findByEmployeeIdAndDateRange(
+            @Param("employeeId") Long employeeId,
+            @Param("startDate") Date startDate,
+            @Param("endDate") Date endDate);
 
-    @Query("SELECT d FROM EmployeeScheduleDay d " +
-            "LEFT JOIN FETCH d.timeBlocks t " +
-            "WHERE d.employeeSchedule.id IN :scheduleIds " +
-            "ORDER BY d.date, t.startTime")
-    List<EmployeeScheduleDay> findDaysWithTimeBlocksByScheduleIds(@Param("scheduleIds") List<Long> scheduleIds);
 
-    // CONSULTAS DE FECHAS SIMPLES
-    @Query("SELECT es FROM EmployeeSchedule es WHERE FUNCTION('DATE', es.startDate) >= :startDate AND FUNCTION('DATE', es.endDate) <= :endDate")
+
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.employeeId IN :employeeIds")
+    List<EmployeeSchedule> findByEmployeeIdIn(@Param("employeeIds") List<Long> employeeIds);
+
+    @Query("SELECT es FROM EmployeeSchedule es LEFT JOIN FETCH es.shift s LEFT JOIN FETCH s.shiftDetails " +
+            "LEFT JOIN FETCH es.days d LEFT JOIN FETCH d.timeBlocks " +
+            "WHERE es.employeeId = :employeeId")
+    List<EmployeeSchedule> findByEmployeeIdWithDetails(@Param("employeeId") Long employeeId);
+
+
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.shift.id = :shiftId")
+    List<EmployeeSchedule> findByShiftId(@Param("shiftId") Long shiftId);
+
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.startDate >= :startDate AND es.endDate <= :endDate")
     List<EmployeeSchedule> findByDateRange(@Param("startDate") Date startDate, @Param("endDate") Date endDate);
 
-    @Query("SELECT e FROM EmployeeSchedule e WHERE e.startDate >= :startDate AND e.endDate IS NULL")
-    List<EmployeeSchedule> findByStartDateAndNullEndDate(@Param("startDate") Date startDate);
-
-    // En EmployeeScheduleRepository.java - agrega esta consulta
-    @Query("SELECT DISTINCT es FROM EmployeeSchedule es " +
-            "LEFT JOIN FETCH es.shift s " +
-            "LEFT JOIN FETCH es.days d " +
-            "WHERE es.employeeId = :employeeId " +
-            "ORDER BY es.id, d.date")
-    List<EmployeeSchedule> findByEmployeeIdWithDaysAndShift(@Param("employeeId") Long employeeId);
 
 
+
+    @Query("SELECT d FROM EmployeeScheduleDay d " +
+            "LEFT JOIN FETCH d.timeBlocks tb " +
+            "LEFT JOIN FETCH d.employeeSchedule es " +
+            "WHERE es.id IN :scheduleIds " +
+            "ORDER BY d.date, tb.startTime")
+    List<EmployeeScheduleDay> findDaysWithTimeBlocksByScheduleIds(@Param("scheduleIds") List<Long> scheduleIds);
+
+
+    // Agregar este método en EmployeeScheduleRepository
+    @Query("SELECT es FROM EmployeeSchedule es WHERE es.shift.id IN :shiftIds")
+    List<EmployeeSchedule> findByShiftIdIn(@Param("shiftIds") List<Long> shiftIds);
 }
 
 

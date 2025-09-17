@@ -1,16 +1,13 @@
 package sp.sistemaspalacios.api_chronos.controller.shift;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import sp.sistemaspalacios.api_chronos.dto.ShiftsDTO;
 import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.service.shift.ShiftsService;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @RestController
 

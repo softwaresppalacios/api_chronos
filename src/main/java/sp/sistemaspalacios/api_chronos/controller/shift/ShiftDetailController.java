@@ -2,7 +2,7 @@ package sp.sistemaspalacios.api_chronos.controller.shift;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import sp.sistemaspalacios.api_chronos.dto.ShiftDetailDTO;
+import sp.sistemaspalacios.api_chronos.dto.shift.ShiftDetailDTO;
 import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
 import sp.sistemaspalacios.api_chronos.service.shift.ShiftDetailService;
 

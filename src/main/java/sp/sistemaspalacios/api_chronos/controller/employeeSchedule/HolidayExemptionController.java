@@ -2,8 +2,8 @@ package sp.sistemaspalacios.api_chronos.controller.employeeSchedule;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import sp.sistemaspalacios.api_chronos.dto.HolidayExemptionDTO;
-import sp.sistemaspalacios.api_chronos.service.employeeSchedule.HolidayExemptionService;
+import sp.sistemaspalacios.api_chronos.dto.holiday.HolidayExemptionDTO;
+import sp.sistemaspalacios.api_chronos.service.employeeSchedule.holiday.HolidayExemptionService;
 
 import java.util.HashMap;
 import java.util.List;

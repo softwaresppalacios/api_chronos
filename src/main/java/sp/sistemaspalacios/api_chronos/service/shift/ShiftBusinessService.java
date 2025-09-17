@@ -1,7 +1,7 @@
 package sp.sistemaspalacios.api_chronos.service.shift;
 
 import org.springframework.stereotype.Service;
-import sp.sistemaspalacios.api_chronos.dto.ShiftBusinessDTOs;
+import sp.sistemaspalacios.api_chronos.dto.shift.ShiftBusinessDTOs;
 import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;

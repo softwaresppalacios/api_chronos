@@ -3,7 +3,7 @@ package sp.sistemaspalacios.api_chronos.controller.employeeSchedule;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeShiftDetail;
-import sp.sistemaspalacios.api_chronos.service.employeeSchedule.EmployeeShiftDetailService;
+import sp.sistemaspalacios.api_chronos.service.employeeSchedule.shift.EmployeeShiftDetailService;
 
 import java.sql.Time;
 import java.util.List;

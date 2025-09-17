@@ -6,8 +6,8 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import sp.sistemaspalacios.api_chronos.dto.ScheduleAssignmentGroupDTO;
-import sp.sistemaspalacios.api_chronos.service.employeeSchedule.ScheduleAssignmentGroupService;
+import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleAssignmentGroupDTO;
+import sp.sistemaspalacios.api_chronos.service.employeeSchedule.assignment.ScheduleAssignmentGroupService;
 
 import java.time.LocalDate;
 import java.util.Collections;

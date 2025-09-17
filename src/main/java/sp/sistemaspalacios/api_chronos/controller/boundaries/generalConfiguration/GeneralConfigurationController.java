@@ -3,11 +3,10 @@ package sp.sistemaspalacios.api_chronos.controller.boundaries.generalConfigurati
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import sp.sistemaspalacios.api_chronos.dto.GeneralConfigurationDTO;
+import sp.sistemaspalacios.api_chronos.dto.configuration.GeneralConfigurationDTO;
 import sp.sistemaspalacios.api_chronos.entity.boundaries.generalConfiguration.GeneralConfiguration;
 import sp.sistemaspalacios.api_chronos.service.boundaries.generalConfiguration.GeneralConfigurationService;
 
-import java.time.Duration;
 import java.util.Map;
 
 @RestController
