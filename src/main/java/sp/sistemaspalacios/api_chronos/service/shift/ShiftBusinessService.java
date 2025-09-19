@@ -1,16 +1,18 @@
 package sp.sistemaspalacios.api_chronos.service.shift;
 
+import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 import sp.sistemaspalacios.api_chronos.dto.shift.ShiftBusinessDTOs;
-import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
-import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftDetailRepository;
+import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 import sp.sistemaspalacios.api_chronos.service.boundaries.generalConfiguration.GeneralConfigurationService;
+import sp.sistemaspalacios.api_chronos.service.common.TimeService;
+import sp.sistemaspalacios.api_chronos.service.common.WorkingTimeCalculatorService;
+import sp.sistemaspalacios.api_chronos.service.common.WorkingTimeValidatorService;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -22,6 +24,10 @@ public class ShiftBusinessService {
     private final ShiftDetailRepository shiftDetailRepository;
     private final GeneralConfigurationService generalConfigurationService;
 
+    private final TimeService timeService;
+    private final WorkingTimeCalculatorService calculator;
+    private final WorkingTimeValidatorService validator;
+
     // Mapeo de días
     private final Map<String, Integer> DAY_MAPPING = Map.of(
             "monday", 1, "tuesday", 2, "wednesday", 3, "thursday", 4,
@@ -31,16 +37,19 @@ public class ShiftBusinessService {
     public ShiftBusinessService(ValidationService validationService,
                                 ShiftsRepository shiftsRepository,
                                 ShiftDetailRepository shiftDetailRepository,
-                                GeneralConfigurationService generalConfigurationService) {
+                                GeneralConfigurationService generalConfigurationService,
+                                TimeService timeService,
+                                WorkingTimeCalculatorService calculator,
+                                WorkingTimeValidatorService validator) {
         this.validationService = validationService;
         this.shiftsRepository = shiftsRepository;
         this.shiftDetailRepository = shiftDetailRepository;
         this.generalConfigurationService = generalConfigurationService;
+        this.timeService = timeService;
+        this.calculator = calculator;
+        this.validator = validator;
     }
 
-    // ==========================================
-    // VALIDACIÓN DE FORMULARIO COMPLETO
-    // ==========================================
 
     public ShiftBusinessDTOs.ShiftFormValidationResponse validateShiftForm(
             ShiftBusinessDTOs.ValidateShiftFormRequest request) {
@@ -58,15 +67,14 @@ public class ShiftBusinessService {
                 errors.add("Debe añadir al menos un día con horarios");
             }
 
-            // 3. Calcular y validar horas totales
+            // 3. Calcular y validar horas totales/netas
             if (request.getTempShiftDetails() != null && !request.getTempShiftDetails().isEmpty()) {
-                double totalHours = calculateTotalHours(request.getTempShiftDetails());
+                double totalHours = calculateTotalHours(request.getTempShiftDetails()); // brutas
                 response.setCurrentTotalHours(totalHours);
 
                 if (request.getWeeklyHoursLimit() != null) {
                     response.setWeeklyHoursLimit(request.getWeeklyHoursLimit());
 
-                    // Validar límites semanales
                     String completionStatus = determineCompletionStatus(totalHours, request.getWeeklyHoursLimit());
                     response.setCompletionStatus(completionStatus);
 
@@ -95,9 +103,6 @@ public class ShiftBusinessService {
         return response;
     }
 
-    // ==========================================
-    // AÑADIR DETALLE DE TURNO
-    // ==========================================
 
     public ShiftBusinessDTOs.AddShiftDetailResponse addShiftDetail(
             ShiftBusinessDTOs.AddShiftDetailRequest request) {
@@ -122,8 +127,7 @@ public class ShiftBusinessService {
                 return response;
             }
 
-            // 3. Validar límites semanales
-            // 3. Validar límites semanales (AHORA con horas NETAS)
+            // 3. Validar límites semanales con HORAS NETAS (brutas - breaks)
             List<ShiftBusinessDTOs.ShiftDetailData> allDetails = new ArrayList<>(request.getExistingDetails());
             allDetails.addAll(newDetails);
 
@@ -144,8 +148,7 @@ public class ShiftBusinessService {
                 response.setTotalHoursAfterAdd(totalNetHours);
             }
 
-
-            // 4. Validar cada nuevo detalle usando ValidationService
+            // 4. Validar cada nuevo detalle usando ValidationService (tu lógica actual)
             for (ShiftBusinessDTOs.ShiftDetailData detail : newDetails) {
                 Map<String, Object> validationResult = validationService.validateTimeRange(
                         detail.getPeriod(),
@@ -160,7 +163,6 @@ public class ShiftBusinessService {
                     return response;
                 }
 
-                // Añadir advertencias si existen
                 if (validationResult.containsKey("warning")) {
                     warnings.add((String) validationResult.get("warning"));
                 }
@@ -180,18 +182,18 @@ public class ShiftBusinessService {
         return response;
     }
 
-    // ==========================================
-    // GUARDAR TURNO COMPLETO
-    // ==========================================
+
+
     /** Horas NETAS = horas de trabajo - (minutos de break / 60) */
     private double calculateNetHours(List<ShiftBusinessDTOs.ShiftDetailData> details) {
+        // Reutiliza el mismo cálculo de brutas + breaks pero con Calculator
         double workHours = calculateTotalHours(details);
         int totalBreakMinutes = calculateTotalBreakMinutes(details);
         double breakHours = totalBreakMinutes / 60.0;
         double net = workHours - breakHours;
         return net < 0 ? 0.0 : net;
     }
-
+    @Transactional
     public Map<String, Object> saveCompleteShift(ShiftBusinessDTOs.SaveCompleteShiftRequest request) {
         Map<String, Object> response = new HashMap<>();
         double tolerance = 0.01;
@@ -218,13 +220,29 @@ public class ShiftBusinessService {
                 return response;
             }
 
+            // 0.1) NORMALIZAR TODAS LAS HORAS del request a "HH:mm" ANTES DE CUALQUIER OTRA COSA
+            for (var detailData : request.getShiftDetails()) {
+                if (detailData.getStartTime() != null) {
+                    detailData.setStartTime(timeService.normalizeTimeForDatabase(detailData.getStartTime()));
+                }
+                if (detailData.getEndTime() != null) {
+                    detailData.setEndTime(timeService.normalizeTimeForDatabase(detailData.getEndTime()));
+                }
+                if (detailData.getBreakStartTime() != null) {
+                    detailData.setBreakStartTime(timeService.normalizeTimeForDatabase(detailData.getBreakStartTime()));
+                }
+                if (detailData.getBreakEndTime() != null) {
+                    detailData.setBreakEndTime(timeService.normalizeTimeForDatabase(detailData.getBreakEndTime()));
+                }
+            }
+
             // 1) Calcular horas WORK / BREAK / NETAS antes de persistir
-            double workHours = calculateTotalHours(request.getShiftDetails());
+            double workHours = calculateTotalHours(request.getShiftDetails());   // usa timeService.parseAny(...)
             int totalBreakMinutes = calculateTotalBreakMinutes(request.getShiftDetails());
             double breakHours = totalBreakMinutes / 60.0;
             double netHours = Math.max(0.0, workHours - breakHours);
 
-            // 2) Obtener límite semanal desde configuración (preferido) o desde el request
+            // 2) Límite semanal
             Double configuredLimit = null;
             try {
                 String weeklyCfg = generalConfigurationService.getByType("WEEKLY_HOURS").getValue();
@@ -235,7 +253,7 @@ public class ShiftBusinessService {
                     ? configuredLimit
                     : parseConfigurationHours(request.getWeeklyHours());
 
-            // 3) BLOQUEAR si excede el límite
+            // 3) Bloquear si excede
             if (weeklyLimit > 0 && netHours > weeklyLimit + tolerance) {
                 response.put("success", false);
                 response.put("errorType", "LIMIT_EXCEEDED");
@@ -252,27 +270,29 @@ public class ShiftBusinessService {
             }
 
             // 4) Persistir turno principal
-            Shifts shift = new Shifts();
+            sp.sistemaspalacios.api_chronos.entity.shift.Shifts shift = new sp.sistemaspalacios.api_chronos.entity.shift.Shifts();
             shift.setName(request.getShiftname());
             shift.setDescription(request.getTypeShift());
             shift.setDependencyId(request.getDependencyId());
             shift.setTimeBreak((long) totalBreakMinutes);
             shift.setCreatedAt(new Date());
 
-            Shifts savedShift = shiftsRepository.save(shift);
+            var savedShift = shiftsRepository.save(shift);
 
-            // 5) Persistir detalles
-            List<ShiftDetail> shiftDetails = new ArrayList<>();
+            // 5) Persistir detalles (ya normalizados a "HH:mm")
+            List<sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail> shiftDetails = new ArrayList<>();
             for (ShiftBusinessDTOs.ShiftDetailData detailData : request.getShiftDetails()) {
-                ShiftDetail detail = new ShiftDetail();
+                var detail = new sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail();
                 detail.setShift(savedShift);
                 detail.setDayOfWeek(detailData.getDayOfWeek());
-                detail.setStartTime(convertTo24Hour(detailData.getStartTime()));
-                detail.setEndTime(convertTo24Hour(detailData.getEndTime()));
 
-                if (detailData.getBreakStartTime() != null && detailData.getBreakEndTime() != null) {
-                    detail.setBreakStartTime(convertTo24Hour(detailData.getBreakStartTime()));
-                    detail.setBreakEndTime(convertTo24Hour(detailData.getBreakEndTime()));
+                detail.setStartTime(detailData.getStartTime()); // ya viene HH:mm
+                detail.setEndTime(detailData.getEndTime());     // ya viene HH:mm
+
+                if (detailData.getBreakStartTime() != null && detailData.getBreakEndTime() != null &&
+                        !detailData.getBreakStartTime().isBlank() && !detailData.getBreakEndTime().isBlank()) {
+                    detail.setBreakStartTime(detailData.getBreakStartTime());
+                    detail.setBreakEndTime(detailData.getBreakEndTime());
                     detail.setBreakMinutes(detailData.getBreakDuration());
                 }
 
@@ -286,13 +306,19 @@ public class ShiftBusinessService {
             response.put("success", true);
             response.put("shiftId", savedShift.getId());
             response.put("message", "Turno creado exitosamente");
-            response.put("scheduledHours", workHours);         // horas brutas
-            response.put("breakHours", breakHours);            // horas de break
-            response.put("netHours", netHours);                // horas netas
-            response.put("requiredHours", weeklyLimit);        // límite semanal
+            response.put("scheduledHours", workHours);
+            response.put("breakHours", breakHours);
+            response.put("netHours", netHours);
+            response.put("requiredHours", weeklyLimit);
             response.put("missingHours", weeklyLimit > 0 ? Math.max(0, weeklyLimit - netHours) : 0);
 
+        } catch (IllegalArgumentException e) {
+            // Errores de datos -> no mandes 400, devuelve success:false
+            response.put("success", false);
+            response.put("errorType", "VALIDATION_ERROR");
+            response.put("error", e.getMessage());
         } catch (Exception e) {
+            // Cualquier otro error controlado
             response.put("success", false);
             response.put("errorType", "INTERNAL_ERROR");
             response.put("error", "Error creando turno: " + e.getMessage());
@@ -301,18 +327,14 @@ public class ShiftBusinessService {
         return response;
     }
 
-    // ==========================================
-    // MÉTODOS AUXILIARES PRIVADOS
-    // ==========================================
+
     private double parseConfigurationHours(Object value) {
         if (value == null) return 0.0;
 
-        // Si viene como número ya parseado
         if (value instanceof Number) {
             return ((Number) value).doubleValue();
         }
 
-        // Parsear como String
         String str = value.toString().trim();
         if (str.isEmpty()) return 0.0;
 
@@ -325,22 +347,21 @@ public class ShiftBusinessService {
                 return hours + (minutes / 60.0);
             }
 
-            // Formato decimal con punto o coma: "44.5" / "44,5"
+            // Formato decimal con punto o coma
             str = str.replace(',', '.');
             return Double.parseDouble(str);
         } catch (Exception ignored) {
             return 0.0;
         }
     }
+
     private void validateBasicFormFields(ShiftBusinessDTOs.ValidateShiftFormRequest request, List<String> errors) {
         if (request.getShiftname() == null || request.getShiftname().trim().isEmpty()) {
             errors.add("El nombre del turno es obligatorio");
         }
-
         if (request.getTypeShift() == null || request.getTypeShift().trim().isEmpty()) {
             errors.add("La descripción del turno es obligatoria");
         }
-
         if (request.getDependencyId() == null || request.getDependencyId() <= 0) {
             errors.add("Debe seleccionar una dependencia válida");
         }
@@ -366,7 +387,7 @@ public class ShiftBusinessService {
 
         // Iterar días seleccionados
         request.getSelectedDays().entrySet().stream()
-                .filter(entry -> entry.getValue()) // Solo días seleccionados (true)
+                .filter(Map.Entry::getValue) // Solo días seleccionados (true)
                 .forEach(dayEntry -> {
                     String dayName = dayEntry.getKey();
                     Integer dayNumber = DAY_MAPPING.get(dayName);
@@ -403,8 +424,7 @@ public class ShiftBusinessService {
     }
 
     private boolean isDayAlreadyAdded(Integer dayNumber, List<ShiftBusinessDTOs.ShiftDetailData> existingDetails) {
-        return existingDetails.stream()
-                .anyMatch(detail -> detail.getDayOfWeek().equals(dayNumber));
+        return existingDetails.stream().anyMatch(detail -> detail.getDayOfWeek().equals(dayNumber));
     }
 
     private boolean isValidTimeRange(ShiftBusinessDTOs.TimeRangeData range) {
@@ -412,127 +432,50 @@ public class ShiftBusinessService {
                 !range.getStart().trim().isEmpty() && !range.getEnd().trim().isEmpty();
     }
 
+
     private double calculateTotalHours(List<ShiftBusinessDTOs.ShiftDetailData> details) {
-        return details.stream()
-                .mapToDouble(this::calculateHoursFromDetail)
-                .sum();
-    }
-
-    private double calculateHoursFromDetail(ShiftBusinessDTOs.ShiftDetailData detail) {
-        try {
-            String startTime24h = convertTo24Hour(detail.getStartTime());
-            String endTime24h = convertTo24Hour(detail.getEndTime());
-
-            LocalTime start = LocalTime.parse(startTime24h);
-            LocalTime end = LocalTime.parse(endTime24h);
-
-            long duration;
-            if (end.isBefore(start)) {
-                // Cruza medianoche
-                duration = ChronoUnit.MINUTES.between(start, LocalTime.MAX) +
-                        ChronoUnit.MINUTES.between(LocalTime.MIN, end) + 1;
-            } else {
-                duration = ChronoUnit.MINUTES.between(start, end);
-            }
-
-            return duration / 60.0;
-
-        } catch (Exception e) {
-            return 0.0;
+        long totalMinutes = 0;
+        for (ShiftBusinessDTOs.ShiftDetailData d : details) {
+            var start = timeService.parseAny(d.getStartTime()); // acepta 12h/24h
+            var end   = timeService.parseAny(d.getEndTime());
+            totalMinutes += calculator.duration(start, end).toMinutes(); // maneja medianoche
         }
+        return totalMinutes / 60.0;
     }
+
 
     private int calculateTotalBreakMinutes(List<ShiftBusinessDTOs.ShiftDetailData> details) {
-        return details.stream()
-                .mapToInt(detail -> detail.getBreakDuration() != null ? detail.getBreakDuration() : 0)
-                .sum();
+        int total = 0;
+        for (ShiftBusinessDTOs.ShiftDetailData d : details) {
+            if (d.getBreakStartTime() != null && d.getBreakEndTime() != null) {
+                total += calculateBreakDuration(d.getBreakStartTime(), d.getBreakEndTime());
+            } else if (d.getBreakDuration() != null) {
+                total += Math.max(0, d.getBreakDuration());
+            }
+        }
+        return Math.max(0, total);
     }
 
     private int calculateBreakDuration(String startTime, String endTime) {
         try {
-            LocalTime start = LocalTime.parse(convertTo24Hour(startTime));
-            LocalTime end = LocalTime.parse(convertTo24Hour(endTime));
-            return (int) ChronoUnit.MINUTES.between(start, end);
+            var s = timeService.parseAny(startTime); // acepta 12h/24h
+            var e = timeService.parseAny(endTime);
+            return (int) calculator.duration(s, e).toMinutes(); // maneja medianoche
         } catch (Exception e) {
             return 0;
         }
     }
 
-    private String convertTo24Hour(String time12h) {
-        if (time12h == null || time12h.trim().isEmpty()) {
-            return "";
-        }
-
-        try {
-            // Si ya está en formato 24h, devolverlo tal como está
-            if (time12h.matches("^\\d{1,2}:\\d{2}$")) {
-                return time12h;
-            }
-
-            // Convertir de 12h AM/PM a 24h
-            String cleaned = time12h.trim().toUpperCase().replaceAll("\\s+", " ");
-            String[] parts = cleaned.split("\\s+");
-            String timePart = parts[0];
-            String amPm = parts[1];
-
-            String[] timeParts = timePart.split(":");
-            int hours = Integer.parseInt(timeParts[0]);
-            int minutes = Integer.parseInt(timeParts[1]);
-
-            if ("AM".equals(amPm) && hours == 12) {
-                hours = 0;
-            } else if ("PM".equals(amPm) && hours != 12) {
-                hours += 12;
-            }
-
-            return String.format("%02d:%02d", hours, minutes);
-
-        } catch (Exception e) {
-            return time12h; // Devolver original si hay error
-        }
-    }
-
-    private void setConfigurationValues(ShiftDetail shiftDetail) {
-        try {
-            String breakValue = generalConfigurationService.getByType("BREAK").getValue();
-            String weeklyHours = generalConfigurationService.getByType("WEEKLY_HOURS").getValue();
-            String hoursPerDay = generalConfigurationService.getByType("DAILY_HOURS").getValue();
-            String nightStart = generalConfigurationService.getByType("NIGHT_START").getValue();
-
-            shiftDetail.setBreakMinutes(Integer.parseInt(breakValue));
-            shiftDetail.setWeeklyHours(weeklyHours);
-            shiftDetail.setNightHoursStart(nightStart);
-            shiftDetail.setHoursPerDay(hoursPerDay);
-
-        } catch (Exception e) {
-            // Usar valores por defecto si hay error
-            shiftDetail.setBreakMinutes(0);
-            shiftDetail.setWeeklyHours("40:00");
-            shiftDetail.setNightHoursStart("19:00");
-            shiftDetail.setHoursPerDay("8:00");
-        }
-    }
-
-    // ==========================================
-    // NUEVOS MÉTODOS PARA LÓGICA COMPLETA EN BACKEND
-    // ==========================================
-
-    /**
-     * Obtiene estado por defecto del formulario con configuración del backend
-     */
     public Map<String, Object> getDefaultFormState() {
         Map<String, Object> defaultState = new HashMap<>();
 
         try {
-            // Períodos configurables
             List<String> periods = Arrays.asList("Mañana", "Tarde", "Noche");
 
-            // Días de la semana
             Map<String, Boolean> selectedDays = new LinkedHashMap<>();
             DAY_MAPPING.keySet().forEach(day -> selectedDays.put(day, false));
             selectedDays.put("allWeek", false);
 
-            // Rangos de tiempo vacíos
             Map<String, Map<String, String>> timeRanges = new HashMap<>();
             periods.forEach(period -> {
                 Map<String, String> range = new HashMap<>();
@@ -541,14 +484,12 @@ public class ShiftBusinessService {
                 timeRanges.put(period, range);
             });
 
-            // Estado de validación inicial
             Map<String, Object> validation = new HashMap<>();
             validation.put("isValid", true);
             validation.put("errors", new ArrayList<>());
             validation.put("periodValidations", new HashMap<>());
             validation.put("globalErrors", new ArrayList<>());
 
-            // Datos del formulario
             defaultState.put("shiftname", "");
             defaultState.put("typeShift", "");
             defaultState.put("dependence", "");
@@ -567,14 +508,10 @@ public class ShiftBusinessService {
         return defaultState;
     }
 
-    /**
-     * Calcula el estado de completitud de un turno
-     */
     public Map<String, Object> calculateCompletionStatus(List<Map<String, Object>> shiftDetailsRaw, Double weeklyHoursLimit) {
         Map<String, Object> response = new HashMap<>();
 
         try {
-            // Convertir datos raw a ShiftDetailData
             List<ShiftBusinessDTOs.ShiftDetailData> shiftDetails = shiftDetailsRaw.stream()
                     .map(this::convertRawToShiftDetailData)
                     .collect(Collectors.toList());
@@ -652,9 +589,6 @@ public class ShiftBusinessService {
         return response;
     }
 
-    /**
-     * Formatea tabla de detalles de turno
-     */
     public Map<String, Object> formatShiftTable(List<ShiftBusinessDTOs.ShiftDetailData> shiftDetails) {
         Map<String, Object> response = new HashMap<>();
 
@@ -666,11 +600,9 @@ public class ShiftBusinessService {
                 return response;
             }
 
-            // Agrupar por día
             Map<Integer, List<ShiftBusinessDTOs.ShiftDetailData>> groupedByDay =
                     shiftDetails.stream().collect(Collectors.groupingBy(ShiftBusinessDTOs.ShiftDetailData::getDayOfWeek));
 
-            // Generar HTML de tabla
             StringBuilder tableHtml = new StringBuilder();
             tableHtml.append("<table style='width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px;'>")
                     .append("<thead><tr style='background: #f8f9fa;'>")
@@ -727,9 +659,6 @@ public class ShiftBusinessService {
         return response;
     }
 
-    /**
-     * Valida y mapea dependencia
-     */
     public Map<String, Object> validateAndMapDependency(Object dependencyData) {
         Map<String, Object> response = new HashMap<>();
 
@@ -740,15 +669,13 @@ public class ShiftBusinessService {
                 return response;
             }
 
-            // Caso String (p.ej., viene "0", "", "Seleccione...")
-            if (dependencyData instanceof String) {
-                String raw = ((String) dependencyData).trim();
+            if (dependencyData instanceof String rawStr) {
+                String raw = rawStr.trim();
                 if (raw.isEmpty() || raw.equals("0")) {
                     response.put("isValid", false);
                     response.put("error", "Debe seleccionar una dependencia válida");
                     return response;
                 }
-                // Si quieres intentar parsear un ID enviado como string:
                 try {
                     Long parsed = Long.valueOf(raw);
                     if (parsed > 0) {
@@ -762,7 +689,6 @@ public class ShiftBusinessService {
                 return response;
             }
 
-            // Caso Map
             if (dependencyData instanceof Map) {
                 Map<?, ?> depMap = (Map<?, ?>) dependencyData;
                 if (depMap.isEmpty()) {
@@ -775,11 +701,8 @@ public class ShiftBusinessService {
                 Object codeObj = depMap.get("code");
 
                 Long dependencyId = null;
-                if (idObj != null) {
-                    dependencyId = tryParseLong(idObj.toString());
-                } else if (codeObj != null) {
-                    dependencyId = tryParseLong(codeObj.toString());
-                }
+                if (idObj != null) dependencyId = tryParseLong(idObj.toString());
+                else if (codeObj != null) dependencyId = tryParseLong(codeObj.toString());
 
                 if (dependencyId == null || dependencyId <= 0) {
                     response.put("isValid", false);
@@ -793,7 +716,6 @@ public class ShiftBusinessService {
                 return response;
             }
 
-            // Otros tipos no soportados
             response.put("isValid", false);
             response.put("error", "Formato de dependencia no soportado");
 
@@ -809,17 +731,13 @@ public class ShiftBusinessService {
         try { return Long.parseLong(s); } catch (Exception e) { return null; }
     }
 
-
-    /**
-     * Convierte múltiples formatos de tiempo
-     */
+    // ShiftBusinessService.java  → reemplaza TODO el método convertTimeFormats por este
     public Map<String, Object> convertTimeFormats(List<String> times, String targetFormat) {
         Map<String, Object> response = new HashMap<>();
+        Map<String, String> conversions = new LinkedHashMap<>();
+        List<String> errors = new ArrayList<>();
 
         try {
-            Map<String, String> conversions = new HashMap<>();
-            List<String> errors = new ArrayList<>();
-
             for (String time : times) {
                 try {
                     if (time == null || time.trim().isEmpty()) {
@@ -829,16 +747,19 @@ public class ShiftBusinessService {
 
                     String convertedTime;
                     if ("24h".equals(targetFormat)) {
-                        convertedTime = convertTo24Hour(time);
+                        // Lo deja en "HH:mm"
+                        convertedTime = timeService.normalizeTimeForDatabase(time);
+                    } else if ("12h".equals(targetFormat)) {
+                        // Normaliza a "HH:mm" y luego lo muestra como "hh:mm AM/PM"
+                        convertedTime = timeService.to12h(timeService.normalizeTimeForDatabase(time));
                     } else {
-                        convertedTime = convertTo12Hour(time);
+                        throw new IllegalArgumentException("Formato objetivo debe ser '24h' o '12h'");
                     }
 
                     conversions.put(time, convertedTime);
-
                 } catch (Exception e) {
                     errors.add("Error convirtiendo '" + time + "': " + e.getMessage());
-                    conversions.put(time, time); // Mantener original
+                    conversions.put(time, time);
                 }
             }
 
@@ -846,7 +767,6 @@ public class ShiftBusinessService {
             response.put("conversions", conversions);
             response.put("errors", errors);
             response.put("targetFormat", targetFormat);
-
         } catch (Exception e) {
             response.put("success", false);
             response.put("error", "Error en conversión de formatos: " + e.getMessage());
@@ -855,9 +775,8 @@ public class ShiftBusinessService {
         return response;
     }
 
-    /**
-     * Verifica superposiciones de tiempo
-     */
+
+
     public Map<String, Object> checkTimeOverlaps(String newStart, String newEnd,
                                                  List<Integer> selectedDays,
                                                  List<Map<String, Object>> existingShifts) {
@@ -874,9 +793,9 @@ public class ShiftBusinessService {
                     Object dayOfWeekObj = shift.get("dayOfWeek");
                     if (dayOfWeekObj != null && Integer.valueOf(dayOfWeekObj.toString()).equals(day)) {
                         String existingStart = (String) shift.get("startTime");
-                        String existingEnd = (String) shift.get("endTime");
+                        String existingEnd   = (String) shift.get("endTime");
 
-                        if (hasTimeOverlap(newStart, newEnd, existingStart, existingEnd)) {
+                        if (timeService.timeOverlaps(newStart, newEnd, existingStart, existingEnd)) {
                             conflicts.add(String.format("Conflicto en %s: %s-%s se superpone con %s-%s",
                                     dayName, newStart, newEnd, existingStart, existingEnd));
                         }
@@ -888,20 +807,16 @@ public class ShiftBusinessService {
             response.put("hasOverlaps", !conflicts.isEmpty());
             response.put("conflicts", conflicts);
             response.put("conflictCount", conflicts.size());
+            return response;
 
         } catch (Exception e) {
             response.put("success", false);
             response.put("hasOverlaps", false);
             response.put("conflicts", new ArrayList<>());
             response.put("error", "Error verificando superposiciones: " + e.getMessage());
+            return response;
         }
-
-        return response;
     }
-
-    // ==========================================
-    // MÉTODOS AUXILIARES PRIVADOS ADICIONALES
-    // ==========================================
 
     private ShiftBusinessDTOs.ShiftDetailData convertRawToShiftDetailData(Map<String, Object> raw) {
         ShiftBusinessDTOs.ShiftDetailData detail = new ShiftBusinessDTOs.ShiftDetailData();
@@ -931,81 +846,52 @@ public class ShiftBusinessService {
         return String.format("%s - %s (%dm)", detail.getBreakStartTime(), detail.getBreakEndTime(), breakDuration);
     }
 
-    private String convertTo12Hour(String time24h) {
+    // Reemplaza TODO el método actual
+    private double calculateHoursFromDetail(ShiftBusinessDTOs.ShiftDetailData detail) {
         try {
-            if (time24h == null || time24h.trim().isEmpty()) {
-                return "";
-            }
-
-            // Si ya está en formato 12h, devolverlo
-            if (time24h.toUpperCase().contains("AM") || time24h.toUpperCase().contains("PM")) {
-                return time24h;
-            }
-
-            LocalTime time = LocalTime.parse(time24h);
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("hh:mm a");
-            return time.format(formatter).toUpperCase();
-
+            LocalTime start = timeService.parseAny(detail.getStartTime());
+            LocalTime end   = timeService.parseAny(detail.getEndTime());
+            return calculator.duration(start, end).toMinutes() / 60.0;
         } catch (Exception e) {
-            return time24h; // Devolver original si hay error
+            return 0.0;
         }
     }
 
-    private boolean hasTimeOverlap(String start1, String end1, String start2, String end2) {
+    private void setConfigurationValues(ShiftDetail shiftDetail) {
         try {
-            int start1Min = timeToMinutes(start1);
-            int end1Min = timeToMinutes(end1);
-            int start2Min = timeToMinutes(start2);
-            int end2Min = timeToMinutes(end2);
+            String breakValue = generalConfigurationService.getByType("BREAK").getValue();
+            String weeklyHours = generalConfigurationService.getByType("WEEKLY_HOURS").getValue();
+            String hoursPerDay = generalConfigurationService.getByType("DAILY_HOURS").getValue();
+            String nightStart = generalConfigurationService.getByType("NIGHT_START").getValue();
 
-            if (start1Min == -1 || end1Min == -1 || start2Min == -1 || end2Min == -1) {
-                return false;
-            }
-
-            // Ajustar para cruces de medianoche
-            if (end1Min < start1Min) end1Min += 24 * 60;
-            if (end2Min < start2Min) end2Min += 24 * 60;
-
-            return !(end1Min <= start2Min || start1Min >= end2Min);
+            shiftDetail.setBreakMinutes(Integer.parseInt(breakValue));
+            shiftDetail.setWeeklyHours(weeklyHours);
+            shiftDetail.setNightHoursStart(nightStart);
+            shiftDetail.setHoursPerDay(hoursPerDay);
 
         } catch (Exception e) {
-            return false;
+            shiftDetail.setBreakMinutes(0);
+            shiftDetail.setWeeklyHours("40:00");
+            shiftDetail.setNightHoursStart("19:00");
+            shiftDetail.setHoursPerDay("8:00");
         }
     }
 
-    private int timeToMinutes(String timeStr) {
-        try {
-            if (timeStr == null || timeStr.trim().isEmpty()) {
-                return -1;
-            }
 
-            String time = timeStr.trim().toUpperCase();
+    // Acepta "HH:mm" o "hh:mm AM/PM"
+    private static final DateTimeFormatter F12 = DateTimeFormatter.ofPattern("hh:mm a");
 
-            // Formato 24h
-            if (time.matches("^\\d{1,2}:\\d{2}$")) {
-                String[] parts = time.split(":");
-                return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
-            }
-
-            // Formato 12h AM/PM
-            if (time.matches("^\\d{1,2}:\\d{2}\\s*(AM|PM)$")) {
-                String[] parts = time.replace(" AM", "").replace(" PM", "").split(":");
-                int hours = Integer.parseInt(parts[0]);
-                int minutes = Integer.parseInt(parts[1]);
-
-                if (time.contains("AM") && hours == 12) {
-                    hours = 0;
-                } else if (time.contains("PM") && hours != 12) {
-                    hours += 12;
-                }
-
-                return hours * 60 + minutes;
-            }
-
-            return -1;
-
-        } catch (Exception e) {
-            return -1;
+    private LocalTime parseAny(String raw) {
+        if (raw == null) {
+            throw new IllegalArgumentException("Hora nula");
         }
+        String s = raw.trim().toUpperCase();
+        // 12h: "07:00 AM" / "7:00 PM"
+        if (s.matches("^\\d{1,2}:\\d{2}\\s*(AM|PM)$")) {
+            return LocalTime.parse(s, F12);
+        }
+        // 24h: "07:00" / "19:30"
+        return LocalTime.parse(s);
     }
+
 }

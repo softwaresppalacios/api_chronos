@@ -7,7 +7,11 @@ import org.springframework.transaction.annotation.Transactional;
 import sp.sistemaspalacios.api_chronos.dto.schedule.TimeBlockDTO;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleTimeBlock;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleDayRepository;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleTimeBlockRepository;
+import sp.sistemaspalacios.api_chronos.service.common.TimeService;
+import sp.sistemaspalacios.api_chronos.service.common.WorkingTimeCalculatorService;
+import sp.sistemaspalacios.api_chronos.service.common.WorkingTimeValidatorService;
 
 import java.sql.Time;
 import java.util.Date;
@@ -18,6 +22,11 @@ import java.util.Date;
 public class TimeBlockService {
 
     private final EmployeeScheduleTimeBlockRepository timeBlockRepository;
+    private final EmployeeScheduleDayRepository dayRepo;
+    private final EmployeeScheduleTimeBlockRepository blockRepo;
+    private final TimeService timeService;
+    private final WorkingTimeCalculatorService calculator;
+    private final WorkingTimeValidatorService validator;
 
     @Transactional
     public EmployeeScheduleTimeBlock updateTimeBlock(TimeBlockDTO timeBlockDTO) {
@@ -42,26 +51,6 @@ public class TimeBlockService {
         return timeBlockRepository.save(timeBlock);
     }
 
-    public EmployeeScheduleTimeBlock getTimeBlockById(Long id) {
-        if (id == null) {
-            throw new IllegalArgumentException("ID no puede ser nulo");
-        }
 
-        return timeBlockRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "TimeBlock no encontrado con ID: " + id));
-    }
 
-    @Transactional
-    public void deleteTimeBlock(Long id) {
-        if (id == null) {
-            throw new IllegalArgumentException("ID no puede ser nulo");
-        }
-
-        if (!timeBlockRepository.existsById(id)) {
-            throw new ResourceNotFoundException("TimeBlock no encontrado con ID: " + id);
-        }
-
-        timeBlockRepository.deleteById(id);
-    }
 }

@@ -2,146 +2,122 @@ package sp.sistemaspalacios.api_chronos.service.common;
 
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
-import java.util.Date;
-import java.util.regex.Pattern;
+import java.time.format.DateTimeParseException;
+import java.util.Locale;
 
 @Service
 public class TimeService {
 
-    private static final Pattern MILITARY_TIME_PATTERN = Pattern.compile("^([01]?[0-9]|2[0-3]):([0-5][0-9])$");
-    private static final Pattern AMPM_TIME_PATTERN = Pattern.compile("^([0]?[1-9]|1[0-2]):[0-5][0-9]\\s*(AM|PM)$");
-    private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    // Acepta 24h: "HH:mm"
+    private static final DateTimeFormatter HH_MM = DateTimeFormatter.ofPattern("HH:mm");
 
-    // ===== CONVERSIÓN DE FECHAS =====
+    // Acepta 12h: "hh:mm a" (AM/PM con o sin espacios, mayúsc/minúsc)
+    private static final DateTimeFormatter F12 = DateTimeFormatter.ofPattern("hh:mm a", Locale.US);
 
-    public LocalDate toLocalDate(Date date) {
+    private static final int MINUTES_PER_DAY = 24 * 60;
+
+    /** Convierte LocalTime a minutos desde 00:00. */
+    public int toMinutes(LocalTime t) {
+        return t.getHour() * 60 + t.getMinute();
+    }
+
+    public Duration minutesToDuration(long minutes) {
+        if (minutes < 0) minutes = 0;
+        return Duration.ofMinutes(minutes);
+    }
+
+    public int normalizeMinutes(int minutes) {
+        int m = minutes % MINUTES_PER_DAY;
+        return m < 0 ? m + MINUTES_PER_DAY : m;
+    }
+
+    /** Parsea "HH:mm" estrictamente. */
+    public LocalTime parse(String hhmm) {
+        if (hhmm == null) throw new IllegalArgumentException("Hora nula");
+        try {
+            return LocalTime.parse(hhmm.trim(), HH_MM);
+        } catch (DateTimeParseException ex) {
+            throw new IllegalArgumentException("Hora inválida (HH:mm): " + hhmm);
+        }
+    }
+
+    /** Formatea a "HH:mm". */
+    public String format(LocalTime t) {
+        return (t == null) ? null : t.format(HH_MM);
+    }
+
+    /** Date -> LocalDate. */
+    public LocalDate toLocalDate(java.util.Date date) {
         if (date == null) return null;
-        if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
         return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
     }
 
-    public Date toDate(LocalDate localDate) {
-        if (localDate == null) return null;
-        return Date.from(localDate.atStartOfDay(ZoneId.systemDefault()).toInstant());
-    }
-
-    public String formatDate(Date date) {
-        return date != null ? toLocalDate(date).format(DATE_FMT) : null;
-    }
-
-    // ===== CONVERSIÓN DE TIEMPO =====
-
-    public String normalizeTimeForDatabase(String time) {
-        if (time == null) return "00:00:00";
-        String t = time.trim();
-        if (t.matches("^\\d{2}:\\d{2}:\\d{2}$")) return t;        // HH:mm:ss
-        if (t.matches("^\\d{1}:\\d{2}$")) return "0" + t + ":00"; // H:mm -> 0H:mm:00
-        if (t.matches("^\\d{2}:\\d{2}$")) return t + ":00";       // HH:mm -> HH:mm:00
-        if (t.matches("^\\d{2}$"))        return t + ":00:00";    // HH -> HH:00:00
-        return "00:00:00";
-    }
-
-    public String convertAmPmTo24h(String time12h) {
-        if (time12h == null || time12h.trim().isEmpty()) {
-            throw new IllegalArgumentException("Tiempo no puede estar vacío");
-        }
-
-        String cleaned = time12h.trim().toUpperCase().replaceAll("\\s+", " ");
-
-        if (!AMPM_TIME_PATTERN.matcher(cleaned).matches()) {
-            // Si ya está en formato 24h, retornar tal como está
-            if (MILITARY_TIME_PATTERN.matcher(cleaned).matches()) {
-                return cleaned;
-            }
-            throw new IllegalArgumentException("Formato inválido: " + time12h);
-        }
-
-        String[] parts = cleaned.split("\\s+");
-        String timePart = parts[0];
-        String amPm = parts[1];
-
-        String[] timeParts = timePart.split(":");
-        int hours = Integer.parseInt(timeParts[0]);
-        int minutes = Integer.parseInt(timeParts[1]);
-
-        if ("AM".equals(amPm) && hours == 12) {
-            hours = 0;
-        } else if ("PM".equals(amPm) && hours != 12) {
-            hours += 12;
-        }
-
-        return String.format("%02d:%02d", hours, minutes);
-    }
-
-    public String convert24hToAmPm(String time24h) {
-        if (!MILITARY_TIME_PATTERN.matcher(time24h).matches()) {
-            throw new IllegalArgumentException("Formato 24h inválido: " + time24h);
-        }
-
-        LocalTime time = LocalTime.parse(time24h);
-        return time.format(DateTimeFormatter.ofPattern("hh:mm a"));
-    }
-
-    // ===== CÁLCULOS DE TIEMPO =====
-
-    public int toMinutes(String timeStr) {
-        String normalized = normalizeTimeForDatabase(timeStr);
-        String[] parts = normalized.split(":");
-        return Integer.parseInt(parts[0]) * 60 + Integer.parseInt(parts[1]);
-    }
-
-    public double calculateHoursBetween(String startTime, String endTime) {
+    /**
+     * Normaliza cualquier entrada (12h o 24h, con/ sin espacio en AM/PM)
+     * a "HH:mm" para guardar en BD.
+     */
+    public String normalizeTimeForDatabase(String input) {
+        if (input == null || input.isBlank()) return null;  // Cambiar de "" a null
         try {
-            String start24h = convertAmPmTo24h(startTime);
-            String end24h = convertAmPmTo24h(endTime);
-
-            LocalTime start = LocalTime.parse(start24h);
-            LocalTime end = LocalTime.parse(end24h);
-
-            long minutes = calculateMinutesBetween(start, end);
-            return minutes / 60.0;
+            LocalTime t = parseAny(input);
+            return format(t);
         } catch (Exception e) {
-            return 0.0;
+            System.err.println("Error parsing time '" + input + "': " + e.getMessage());
+            return null;  // En caso de error, devolver null en lugar de fallar
         }
     }
-
-    public long calculateMinutesBetween(LocalTime start, LocalTime end) {
-        if (end.isBefore(start)) {
-            // Cruza medianoche
-            return ChronoUnit.MINUTES.between(start, LocalTime.MAX) +
-                    ChronoUnit.MINUTES.between(LocalTime.MIN, end) + 1;
-        } else {
-            return ChronoUnit.MINUTES.between(start, end);
-        }
+    /** Calcula horas entre dos tiempos (acepta 12h o 24h, soporta cruce medianoche). */
+    public double calculateHoursBetween(String start, String end) {
+        LocalTime s = parseAny(start);
+        LocalTime e = parseAny(end);
+        int sm = toMinutes(s);
+        int em = toMinutes(e);
+        int diff = em - sm;
+        if (diff <= 0) diff += 24 * 60;
+        return diff / 60.0;
     }
 
-    // ===== VALIDACIONES =====
-
-    public boolean isValidMilitaryTime(String time) {
-        return time != null && MILITARY_TIME_PATTERN.matcher(time).matches();
-    }
-
+    /** ¿Solapan dos rangos? (acepta 12h/24h, soporta medianoche). */
     public boolean timeOverlaps(String s1, String e1, String s2, String e2) {
-        try {
-            String ns1 = normalizeTimeForDatabase(s1);
-            String ne1 = normalizeTimeForDatabase(e1);
-            String ns2 = normalizeTimeForDatabase(s2);
-            String ne2 = normalizeTimeForDatabase(e2);
+        LocalTime a1 = parseAny(s1), b1 = parseAny(e1);
+        LocalTime a2 = parseAny(s2), b2 = parseAny(e2);
+        int sA = toMinutes(a1), eA = toMinutes(b1);
+        int sB = toMinutes(a2), eB = toMinutes(b2);
+        if (eA <= sA) eA += 24 * 60;
+        if (eB <= sB) eB += 24 * 60;
+        return !(eA <= sB || eB <= sA);
+    }
 
-            int a1 = toMinutes(ns1), a2 = toMinutes(ne1);
-            int b1 = toMinutes(ns2), b2 = toMinutes(ne2);
 
-            if (a2 <= a1) a2 += 1440; // soporta cruce nocturno
-            if (b2 <= b1) b2 += 1440;
+    public LocalTime parseAny(String raw) {
+        if (raw == null) throw new IllegalArgumentException("Hora nula");
 
-            return a1 < b2 && b1 < a2;
-        } catch (Exception ex) {
-            return false;
+        String s = raw.trim().toUpperCase(Locale.US);
+
+        // Aceptar también sin espacio entre hora y AM/PM (p.ej. "07:00AM")
+        if (s.matches("^\\d{1,2}:\\d{2}(AM|PM)$")) {
+            // inserta un espacio antes de AM/PM para cumplir "hh:mm a"
+            s = s.replaceAll("(AM|PM)$", " $1");
         }
+
+        // Intenta 12h primero si trae AM/PM
+        if (s.contains("AM") || s.contains("PM")) {
+            return LocalTime.parse(s, F12);
+        }
+
+        // Si no trae AM/PM, asume 24h
+        return LocalTime.parse(s, HH_MM);
+    }
+
+    /** Formatea "HH:mm" a "hh:mm AM/PM". */
+    public String to12h(String hhmm) {
+        if (hhmm == null || hhmm.isBlank()) return "";
+        LocalTime t = parse(hhmm);
+        return t.format(F12).toUpperCase(Locale.US);
     }
 }

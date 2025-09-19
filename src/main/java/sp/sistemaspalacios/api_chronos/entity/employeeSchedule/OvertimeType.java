@@ -2,17 +2,16 @@ package sp.sistemaspalacios.api_chronos.entity.employeeSchedule;
 
 import jakarta.persistence.*;
 import lombok.*;
-
 import java.math.BigDecimal;
 
 @Entity
 @Table(name = "overtime_types")
-@Getter
-@Setter
+@Getter @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
 public class OvertimeType {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -26,6 +25,7 @@ public class OvertimeType {
     @Column(nullable=false, precision=5, scale=2)
     private BigDecimal percentage; // 0.25 = 25%
 
+    @Builder.Default
     @Column(nullable=false)
     private boolean active = true;
 }

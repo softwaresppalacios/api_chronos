@@ -30,25 +30,7 @@ public class HourClassificationService {
     private final HolidayService holidayService;
     private final GeneralConfigurationService configService;
 
-    /**
-     * Método principal: clasifica todas las horas de una lista de schedules
-     */
 
-    /**
-     * Clasifica las horas de un día específico
-     */
-    /**
-     * Clasifica las horas de un día específico
-     */
-    /**
-     * Clasifica las horas de un día específico usando la MISMA lógica que classifyScheduleHours
-     */
-    /**
-     * Clasifica las horas de un día específico REALMENTE
-     */
-    /**
-     * Clasifica las horas de un día específico usando la misma lógica que el método principal
-     */
     public Map<String, BigDecimal> classifyDayHours(EmployeeSchedule schedule, LocalDate date) {
         if (schedule == null || date == null) return new HashMap<>();
 
@@ -125,28 +107,7 @@ public class HourClassificationService {
 
         return false;
     }
-    // Método helper para calcular horas semanales antes de una fecha específica
-    private BigDecimal calculateWeeklyHoursBeforeDate(EmployeeSchedule schedule, LocalDate targetDate, BigDecimal weeklyLimit) {
-        // Obtener el lunes de la semana de targetDate
-        LocalDate mondayOfWeek = targetDate.minusDays(targetDate.getDayOfWeek().getValue() - 1);
 
-        BigDecimal weeklyHours = BigDecimal.ZERO;
-
-        // Sumar horas desde el lunes hasta el día anterior al targetDate
-        for (LocalDate date = mondayOfWeek; date.isBefore(targetDate); date = date.plusDays(1)) {
-            List<int[]> dayRanges = getTimeRangesForDateSimple(schedule, date);
-            for (int[] range : dayRanges) {
-                int totalMinutes = (range[1] > range[0]) ?
-                        (range[1] - range[0]) :
-                        (1440 - range[0] + range[1]);
-                BigDecimal dayHours = BigDecimal.valueOf(totalMinutes).divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
-                weeklyHours = weeklyHours.add(dayHours);
-            }
-        }
-
-        return weeklyHours;
-    }
-    // Método helper para identificar tipos especiales
     private boolean isSpecialHourType(String type) {
         return type.startsWith("EXTRA_") ||
                 type.startsWith("FESTIVO_") ||
@@ -168,17 +129,7 @@ public class HourClassificationService {
                 });
     }
 
-    /**
-     * Obtiene el código REAL de overtime_types (NO simplificar)
-     */
-    public String getPrimaryHourType(Map<String, BigDecimal> dayClassification) {
-        // DEVOLVER EL CÓDIGO COMPLETO, no simplificarlo
-        return dayClassification.entrySet().stream()
-                .filter(entry -> entry.getValue().compareTo(BigDecimal.ZERO) > 0)
-                .max(Map.Entry.comparingByValue())
-                .map(Map.Entry::getKey) // CAMBIO: devolver la key completa
-                .orElse("REGULAR");
-    }
+
     public Map<String, BigDecimal> classifyScheduleHours(List<EmployeeSchedule> schedules) {
         if (schedules.isEmpty()) return new HashMap<>();
 
@@ -194,9 +145,7 @@ public class HourClassificationService {
         return processSchedulesDirectly(schedules, nightStartMinutes, weeklyLimit, holidays, availableTypes);
     }
 
-    /**
-     * Procesa schedules directamente sin crear objetos intermedios
-     */
+
     private Map<String, BigDecimal> processSchedulesDirectly(List<EmployeeSchedule> schedules,
                                                              int nightStartMinutes,
                                                              BigDecimal weeklyLimit,
@@ -206,8 +155,6 @@ public class HourClassificationService {
         Map<String, BigDecimal> result = new HashMap<>();
         Map<String, BigDecimal> weeklyAccumulator = new HashMap<>();
         Map<String, Set<Long>> schedulesPerEmployeeDay = new HashMap<>();
-
-
 
         WeekFields weekFields = WeekFields.ISO;
 
@@ -233,14 +180,17 @@ public class HourClassificationService {
                     continue;
                 }
 
-                // Detectar solapamiento por schedule
+                // REACTIVAR detección de múltiples turnos
                 String employeeDayKey = employeeId + "-" + date.toString();
                 Set<Long> existingSchedules = schedulesPerEmployeeDay.getOrDefault(employeeDayKey, new HashSet<>());
                 boolean isOverlapExtra = !existingSchedules.isEmpty() && !existingSchedules.contains(scheduleId);
 
-                if (isOverlapExtra) {
-
-                }
+                // DEBUG TEMPORAL
+                System.out.println("=== SCHEDULE DEBUG ===");
+                System.out.println("Employee: " + employeeId + ", Date: " + date + ", ScheduleId: " + scheduleId);
+                System.out.println("ExistingSchedules: " + existingSchedules);
+                System.out.println("IsOverlapExtra: " + isOverlapExtra);
+                System.out.println("=== END SCHEDULE DEBUG ===");
 
                 // Obtener rangos de tiempo para esta fecha
                 List<int[]> timeRanges = getTimeRangesForDateSimple(schedule, date);
@@ -269,25 +219,17 @@ public class HourClassificationService {
                     }
                 }
 
-                // Registrar este schedule para este empleado-día
+                // Registrar el schedule procesado
                 existingSchedules.add(scheduleId);
                 schedulesPerEmployeeDay.put(employeeDayKey, existingSchedules);
             }
         }
 
-
-        result.forEach((type, hours) -> {
-            if (hours.compareTo(BigDecimal.ZERO) > 0) {
-
-            }
-        });
-
         return result;
     }
 
-    /**
-     * Procesa un segmento de horas específico
-     */
+
+
     private void processHoursSegment(Long employeeId, Long scheduleId, LocalDate date, int minutes, boolean isNight,
                                      boolean isHoliday, boolean isSunday, boolean hasExemption, String exemptionReason,
                                      boolean isOverlapExtra, BigDecimal weeklyLimit, Map<String, BigDecimal> weeklyAccumulator,
@@ -299,52 +241,31 @@ public class HourClassificationService {
         BigDecimal weeklyHours = weeklyAccumulator.getOrDefault(employeeWeekKey, BigDecimal.ZERO);
         BigDecimal segmentHours = BigDecimal.valueOf(minutes).divide(BigDecimal.valueOf(60), 2, RoundingMode.HALF_UP);
 
-        boolean exceedsWeekly = weeklyHours.compareTo(weeklyLimit) >= 0;
-        boolean willExceedWeekly = weeklyHours.add(segmentHours).compareTo(weeklyLimit) > 0;
-        boolean isExtra = isOverlapExtra || exceedsWeekly;
+        // SOLO usar múltiples turnos para determinar "extra", NO límite semanal
+        boolean isExtra = isOverlapExtra;
 
+        // DEBUG TEMPORAL
+        System.out.println("=== PROCESS HOURS DEBUG ===");
+        System.out.println("Employee: " + employeeId + ", Date: " + date + ", Minutes: " + minutes);
+        System.out.println("IsOverlapExtra: " + isOverlapExtra + ", IsExtra: " + isExtra);
 
-        if (!isOverlapExtra && !exceedsWeekly && willExceedWeekly) {
-            // Dividir el segmento: parte regular + parte extra
-            BigDecimal remainingRegular = weeklyLimit.subtract(weeklyHours);
-            BigDecimal extraPortion = segmentHours.subtract(remainingRegular);
+        // Procesar TODAS las horas normalmente sin división por límite semanal
+        String typeCode = determineHourTypeSimple(isNight, isHoliday, isSunday, hasExemption,
+                exemptionReason, isExtra, availableTypes);
 
+        if (typeCode != null) {
+            result.merge(typeCode, segmentHours, BigDecimal::add);
+            System.out.println("Added: " + typeCode + " = " + segmentHours + "h");
 
-            if (remainingRegular.compareTo(BigDecimal.ZERO) > 0) {
-                String regularType = determineHourTypeSimple(isNight, isHoliday, isSunday, hasExemption,
-                        exemptionReason, false, availableTypes);
-                result.merge(regularType, remainingRegular, BigDecimal::add);
-
-                if (regularType.startsWith("REGULAR_") || regularType.startsWith("FESTIVO_")) {
-                    weeklyAccumulator.put(employeeWeekKey, weeklyLimit);
-                }
-            }
-
-            if (extraPortion.compareTo(BigDecimal.ZERO) > 0) {
-                String extraType = determineHourTypeSimple(isNight, isHoliday, isSunday, hasExemption,
-                        exemptionReason, true, availableTypes);
-                result.merge(extraType, extraPortion, BigDecimal::add);
-            }
-
-        } else {
-            // Procesar normalmente
-            String typeCode = determineHourTypeSimple(isNight, isHoliday, isSunday, hasExemption,
-                    exemptionReason, isExtra, availableTypes);
-
-            if (typeCode != null) {
-                result.merge(typeCode, segmentHours, BigDecimal::add);
-
-                if (typeCode.startsWith("REGULAR_") || typeCode.startsWith("FESTIVO_")) {
-                    BigDecimal newWeeklyTotal = weeklyHours.add(segmentHours);
-                    weeklyAccumulator.put(employeeWeekKey, newWeeklyTotal);
-                }
-            }
+            // Seguir acumulando para tracking, pero sin usar para división
+            BigDecimal newWeeklyTotal = weeklyHours.add(segmentHours);
+            weeklyAccumulator.put(employeeWeekKey, newWeeklyTotal);
+            System.out.println("Updated weekly total: " + newWeeklyTotal);
         }
+        System.out.println("=== END DEBUG ===");
     }
 
-    /**
-     * Determina el tipo de hora de forma simplificada
-     */
+
     private String determineHourTypeSimple(boolean isNight, boolean isHoliday, boolean isSunday,
                                            boolean hasExemption, String exemptionReason, boolean isExtra,
                                            Map<String, OvertimeTypeDTO> availableTypes) {

@@ -175,6 +175,6 @@ public class ScheduleValidationService {
             this.errors = errors;
         }
 
-        public List<String> getErrors() { return errors; }
+
     }
 }

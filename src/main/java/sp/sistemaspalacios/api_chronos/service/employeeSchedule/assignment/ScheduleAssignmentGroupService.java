@@ -79,34 +79,6 @@ public class ScheduleAssignmentGroupService {
     }
 
 
-    @Transactional
-    public void syncAllGroupStatuses() {
-        try {
-            List<ScheduleAssignmentGroup> allGroups = groupRepository.findAll();
-            int updatedCount = 0;
-
-            for (ScheduleAssignmentGroup group : allGroups) {
-                String currentStatus = group.getStatus();
-                String effectiveStatus = getEffectiveStatus(group);
-
-                if (!Objects.equals(currentStatus, effectiveStatus)) {
-                    group.setStatus(effectiveStatus);
-                    groupRepository.save(group);
-                    updatedCount++;
-                    log.debug("Grupo ID {} actualizado de {} a {} (empleado: {}, período: {} - {})",
-                            group.getId(), currentStatus, effectiveStatus,
-                            group.getEmployeeId(), group.getPeriodStart(), group.getPeriodEnd());
-                }
-            }
-
-            if (updatedCount > 0) {
-                log.info("Sincronización de status: {} grupos actualizados de {} totales",
-                        updatedCount, allGroups.size());
-            }
-        } catch (Exception e) {
-            log.error("Error sincronizando status de grupos: {}", e.getMessage());
-        }
-    }
 
 
     public List<ScheduleAssignmentGroupDTO> getEmployeeGroups(Long employeeId) {
@@ -117,17 +89,6 @@ public class ScheduleAssignmentGroupService {
                 .collect(Collectors.toList());
     }
 
-    @Transactional
-    public ScheduleAssignmentGroupDTO getLatestGroupForEmployee(Long employeeId) {
-        Optional<ScheduleAssignmentGroup> latest = groupRepository.findByEmployeeId(employeeId).stream()
-                .max(Comparator.comparing(ScheduleAssignmentGroup::getId));
-
-        if (latest.isEmpty()) return null;
-
-        ScheduleAssignmentGroup group = latest.get();
-        syncStatusWithDates(group);
-        return convertGroupToDTO(group);
-    }
 
     @Transactional
     public ScheduleAssignmentGroupDTO getGroupById(Long groupId) {
@@ -527,14 +488,6 @@ public class ScheduleAssignmentGroupService {
         return dto;
     }
 
-    // ===== FILTROS =====
-
-    private boolean filterByStatus(ScheduleAssignmentGroup group, String status) {
-        if (status == null || status.trim().isEmpty() || "TODOS".equalsIgnoreCase(status)) {
-            return true;
-        }
-        return status.equalsIgnoreCase(getEffectiveStatus(group));
-    }
 
     private boolean filterByEmployee(ScheduleAssignmentGroup group, Long employeeId) {
         return employeeId == null || Objects.equals(group.getEmployeeId(), employeeId);
@@ -600,69 +553,4 @@ public class ScheduleAssignmentGroupService {
         return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
     }
 
-
-
-    /**
-     * Versión optimizada que NO calcula horas ni actualiza status
-     * Solo devuelve los IDs de schedules activos
-     */
-    public List<Long> getActiveScheduleIdsForEmployee(Long employeeId) {
-        List<ScheduleAssignmentGroup> groups = groupRepository.findByEmployeeId(employeeId);
-
-        return groups.stream()
-                .filter(group -> isGroupActive(group))  // Sin actualizar BD
-                .flatMap(group -> group.getEmployeeScheduleIds().stream())
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * Versión lightweight de getEmployeeGroups sin cálculos pesados
-     */
-    public List<ScheduleAssignmentGroupDTO> getEmployeeGroupsLightweight(Long employeeId) {
-        List<ScheduleAssignmentGroup> groups = groupRepository.findByEmployeeId(employeeId);
-
-        return groups.stream()
-                .map(this::convertGroupToLightweightDTO)  // Sin cargar schedules ni calcular horas
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * Determinar si un grupo está activo sin actualizar la base de datos
-     */
-    private boolean isGroupActive(ScheduleAssignmentGroup group) {
-        if (group.getPeriodEnd() == null) return true;
-
-        LocalDate today = LocalDate.now();
-        LocalDate endDate = convertToLocalDate(group.getPeriodEnd());
-
-        return !today.isAfter(endDate);
-    }
-
-    /**
-     * Conversión lightweight sin cargar schedules ni calcular horas
-     */
-    private ScheduleAssignmentGroupDTO convertGroupToLightweightDTO(ScheduleAssignmentGroup group) {
-        ScheduleAssignmentGroupDTO dto = new ScheduleAssignmentGroupDTO();
-
-        dto.setId(group.getId());
-        dto.setEmployeeId(group.getEmployeeId());
-        dto.setPeriodStart(dateFormat.format(group.getPeriodStart()));
-        dto.setPeriodEnd(dateFormat.format(group.getPeriodEnd()));
-        dto.setEmployeeScheduleIds(group.getEmployeeScheduleIds());
-        dto.setStatus(isGroupActive(group) ? "ACTIVE" : "INACTIVE");  // Sin actualizar BD
-
-        // Totales desde la BD (pueden estar desactualizados pero son rápidos)
-        dto.setTotalHours(group.getTotalHours() != null ? group.getTotalHours() : BigDecimal.ZERO);
-        dto.setRegularHours(group.getRegularHours() != null ? group.getRegularHours() : BigDecimal.ZERO);
-        dto.setOvertimeHours(group.getOvertimeHours() != null ? group.getOvertimeHours() : BigDecimal.ZERO);
-        dto.setFestivoHours(group.getFestivoHours() != null ? group.getFestivoHours() : BigDecimal.ZERO);
-        dto.setAssignedHours(dto.getRegularHours().add(dto.getFestivoHours()));
-
-        dto.setOvertimeType(group.getOvertimeType());
-        dto.setFestivoType(group.getFestivoType());
-        dto.setOvertimeBreakdown(new HashMap<>()); // Vacío para versión lightweight
-        dto.setScheduleDetails(Collections.emptyList()); // Vacío para versión lightweight
-
-        return dto;
-    }
 }

@@ -1,7 +1,10 @@
 package sp.sistemaspalacios.api_chronos.dto.schedule;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
-import org.jetbrains.annotations.NotNull;
+import com.fasterxml.jackson.annotation.JsonInclude;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -14,36 +17,74 @@ public final class ScheduleDto {
     // ========= REQUESTS =========
 
     public static class AssignmentRequest {
-        @NotNull
+        @NotNull(message = "assignments es requerido")
+        @NotEmpty(message = "Al menos una asignación es requerida")
+        @Valid
         private List<ScheduleAssignment> assignments = new ArrayList<>();
+
+        public void setAssignments(List<ScheduleAssignment> assignments) {
+            this.assignments = (assignments != null) ? assignments : new ArrayList<>();
+        }
         public AssignmentRequest() {}
+
         public List<ScheduleAssignment> getAssignments() { return assignments; }
-        public void setAssignments(List<ScheduleAssignment> assignments) { this.assignments = assignments; }
+
+        @Override
+        public String toString() {
+            return "AssignmentRequest{assignments=" + assignments + '}';
+        }
     }
 
     public static class ScheduleAssignment {
-        @NotNull private Long employeeId;
-        @NotNull private Long shiftId;
-        @NotNull private LocalDate startDate;
+        @NotNull(message = "Employee ID es requerido")
+        private Long employeeId;
+
+        @NotNull(message = "Shift ID es requerido")
+        private Long shiftId;
+
+        @NotNull
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
+        private LocalDate startDate;
+
+        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
         private LocalDate endDate;
 
         public ScheduleAssignment() {}
+
         public Long getEmployeeId() { return employeeId; }
         public void setEmployeeId(Long employeeId) { this.employeeId = employeeId; }
+
         public Long getShiftId() { return shiftId; }
         public void setShiftId(Long shiftId) { this.shiftId = shiftId; }
+
         public LocalDate getStartDate() { return startDate; }
         public void setStartDate(LocalDate startDate) { this.startDate = startDate; }
+
         public LocalDate getEndDate() { return endDate; }
         public void setEndDate(LocalDate endDate) { this.endDate = endDate; }
+
+        @Override
+        public String toString() {
+            return "ScheduleAssignment{" +
+                    "employeeId=" + employeeId +
+                    ", shiftId=" + shiftId +
+                    ", startDate=" + startDate +
+                    ", endDate=" + endDate +
+                    '}';
+        }
     }
 
     public static class HolidayConfirmationRequest {
-        @NotNull
+        @NotNull(message = "confirmedAssignments es requerido")
+        @NotEmpty(message = "Debes confirmar al menos una asignación")
+        @Valid
         private List<ConfirmedAssignment> confirmedAssignments = new ArrayList<>();
+
+        public void setConfirmedAssignments(List<ConfirmedAssignment> confirmedAssignments) {
+            this.confirmedAssignments = (confirmedAssignments != null) ? confirmedAssignments : new ArrayList<>();
+        }
         public HolidayConfirmationRequest() {}
         public List<ConfirmedAssignment> getConfirmedAssignments() { return confirmedAssignments; }
-        public void setConfirmedAssignments(List<ConfirmedAssignment> confirmedAssignments) { this.confirmedAssignments = confirmedAssignments; }
     }
 
     public static class ConfirmedAssignment {
@@ -57,7 +98,8 @@ public final class ScheduleDto {
         @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
         private LocalDate endDate;
 
-        private List<HolidayDecision> holidayDecisions;
+        @Valid // ⬅️ importante para validar cada HolidayDecision
+        private List<HolidayDecision> holidayDecisions = new ArrayList<>(); // ⬅️ evita null
 
         public ConfirmedAssignment() {}
         public Long getEmployeeId() { return employeeId; }
@@ -72,16 +114,15 @@ public final class ScheduleDto {
         public void setHolidayDecisions(List<HolidayDecision> holidayDecisions) { this.holidayDecisions = holidayDecisions; }
     }
 
-    public static class HolidayDecision {
-        @NotNull
-        @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
-        private LocalDate holidayDate;
+    public static class HolidayDecision { @NotNull
+    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd")
+    private LocalDate holidayDate;
 
         private boolean applyHolidayCharge;
         private String exemptionReason;
 
         // Tu servicio usa reflexión sobre estos objetos. Dejamos Object.
-        private List<Map<String, Object>> shiftSegments;
+        private List<Map<String, Object>> shiftSegments = new ArrayList<>(); // ⬅️ evita null
 
         public HolidayDecision() {}
         public LocalDate getHolidayDate() { return holidayDate; }
@@ -125,6 +166,8 @@ public final class ScheduleDto {
             this.requiresConfirmation = requiresConfirmation;
         }
     }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL) // ⬅️ nuevo
 
     public static class ValidationResult {
         private boolean valid;

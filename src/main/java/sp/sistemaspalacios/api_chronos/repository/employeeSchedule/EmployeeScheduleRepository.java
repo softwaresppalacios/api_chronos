@@ -76,6 +76,23 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
     // Agregar este método en EmployeeScheduleRepository
     @Query("SELECT es FROM EmployeeSchedule es WHERE es.shift.id IN :shiftIds")
     List<EmployeeSchedule> findByShiftIdIn(@Param("shiftIds") List<Long> shiftIds);
+
+
+
+
+    @Query("""
+  SELECT es FROM EmployeeSchedule es
+  WHERE es.startDate <= :endDate
+    AND (es.endDate IS NULL OR es.endDate >= :startDate)
+""")
+    List<EmployeeSchedule> findOverlapping(@Param("dependencyId") Long dependencyId, // puedes dejarlo o quitarlo
+                                           @Param("startDate") java.time.LocalDate startDate,
+                                           @Param("endDate")   java.time.LocalDate endDate);
+
+
+
+
+
 }
 
 

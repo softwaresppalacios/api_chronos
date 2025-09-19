@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.dto.employee.EmployeeHoursSummaryDTO;
 import sp.sistemaspalacios.api_chronos.dto.employee.EmployeeScheduleDTO;
+import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.AssignmentRequest;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.AssignmentResult;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.HolidayConfirmationRequest;
@@ -21,6 +22,7 @@ import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleDayRepository;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleTimeBlockRepository;
+import sp.sistemaspalacios.api_chronos.service.common.TimeService;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.core.EmployeeScheduleService;
 
 import java.sql.Time;
@@ -38,15 +40,16 @@ public class EmployeeScheduleController {
     private final EmployeeScheduleService employeeScheduleService;
     private final EmployeeScheduleDayRepository employeeScheduleDayRepository;
     private final EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository;
+    private final TimeService timeService;
 
-
-    public EmployeeScheduleController(EmployeeScheduleService employeeScheduleService,
+    public EmployeeScheduleController(EmployeeScheduleService employeeScheduleService, TimeService timeService,
                                       EmployeeScheduleDayRepository employeeScheduleDayRepository,
                                       EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository
                                       ) {
         this.employeeScheduleService = employeeScheduleService;
         this.employeeScheduleDayRepository = employeeScheduleDayRepository;
         this.employeeScheduleTimeBlockRepository = employeeScheduleTimeBlockRepository;
+        this.timeService = timeService;
 
 
     }
@@ -54,11 +57,115 @@ public class EmployeeScheduleController {
     // =================== SCHEDULE MANAGEMENT ===================
 
     @PostMapping("/assign-multiple")
-    public ResponseEntity<AssignmentResult> assignMultipleSchedules(
-            @Valid @RequestBody AssignmentRequest request) {
-        AssignmentResult result = employeeScheduleService.processMultipleAssignments(request);
-        return ResponseEntity.ok(result);
+    public ResponseEntity<Map<String, Object>> assignMultiple(
+            @Valid @RequestBody AssignmentRequest request
+    ) {
+        Map<String, Object> body = new HashMap<>();
+
+        // ===== DEBUG LOGGING =====
+        System.out.println("=== ASSIGN MULTIPLE REQUEST ===");
+        System.out.println("Request: " + request);
+        if (request != null && request.getAssignments() != null) {
+            System.out.println("Assignments size: " + request.getAssignments().size());
+            for (int i = 0; i < request.getAssignments().size(); i++) {
+                ScheduleDto.ScheduleAssignment a = request.getAssignments().get(i);
+                System.out.println("Assignment " + i + ": " + a);
+            }
+        }
+        System.out.println("=== END DEBUG ===");
+
+        try {
+            AssignmentResult result = employeeScheduleService.processMultipleAssignments(request);
+
+            // Defensa: si el servicio retornó null, arma un resultado consistente
+            if (result == null) {
+                result = new AssignmentResult();
+                result.setSuccess(true);
+                result.setMessage("Asignación procesada.");
+                result.setUpdatedEmployees(new ArrayList<>());
+                result.setHolidayWarnings(new ArrayList<>());
+                result.setRequiresConfirmation(false);
+            } else {
+                // Normaliza listas a vacías para evitar nulls en JSON
+                if (result.getUpdatedEmployees() == null) result.setUpdatedEmployees(new ArrayList<>());
+                if (result.getHolidayWarnings() == null) result.setHolidayWarnings(new ArrayList<>());
+            }
+
+            // Envoltorio estándar para éxito
+            body.put("success", result.isSuccess());
+            if (result.getMessage() != null && !result.getMessage().isBlank()) {
+                body.put("message", result.getMessage());
+            }
+            body.put("result", result);
+
+            return ResponseEntity.ok(body);
+
+        } catch (ScheduleDto.ConflictException ce) {
+            System.err.println("ConflictException: " + ce.getMessage());
+            body.put("success", false);
+            body.put("error", "SCHEDULE_CONFLICT");
+            body.put("message", ce.getMessage());
+            body.put("conflicts", ce.getConflicts());
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+
+        } catch (ScheduleDto.ValidationException ve) {
+            System.err.println("ValidationException: " + ve.getMessage());
+            System.err.println("Validation errors: " + ve.getValidationErrors());
+            body.put("success", false);
+            body.put("error", "VALIDATION_ERROR");
+            body.put("message", ve.getMessage() != null ? ve.getMessage() : "La solicitud no pasó validación");
+            body.put("validationErrors", ve.getValidationErrors());
+            return ResponseEntity.badRequest().body(body);
+
+        } catch (IllegalArgumentException iae) {
+            System.err.println("IllegalArgumentException: " + iae.getMessage());
+            iae.printStackTrace();
+            body.put("success", false);
+            body.put("error", "BAD_REQUEST");
+            body.put("message", iae.getMessage() != null ? iae.getMessage() : "La solicitud contiene datos inválidos");
+            body.put("rootCause", iae.getClass().getSimpleName());
+            return ResponseEntity.badRequest().body(body);
+
+        } catch (org.springframework.dao.DataIntegrityViolationException dive) {
+            System.err.println("DataIntegrityViolationException: " + dive.getMessage());
+            dive.printStackTrace();
+            body.put("success", false);
+            body.put("error", "SCHEDULE_CONFLICT");
+            body.put("message", "No se pudo asignar los turnos en las mismas fechas");
+            body.put("rootCause", "DataIntegrityViolationException");
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+
+        } catch (Exception ex) {
+            System.err.println("Unexpected Exception: " + ex.getClass().getName() + " - " + ex.getMessage());
+            ex.printStackTrace();
+            body.put("success", false);
+            body.put("error", "INTERNAL_ERROR");
+            body.put("message", "Ocurrió un error inesperado: " + ex.getMessage());
+            body.put("rootCause", ex.getClass().getSimpleName());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
+        }
     }
+
+    private String rootCause(Throwable t) {
+        Throwable c = t;
+        while (c.getCause() != null && c.getCause() != c) {
+            c = c.getCause();
+        }
+        return c.getClass().getSimpleName() + (c.getMessage() != null ? (": " + c.getMessage()) : "");
+    }
+
+
+    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> onBeanValidation(org.springframework.web.bind.MethodArgumentNotValidException ex) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", false);
+        body.put("error", "VALIDATION_ERROR");
+        body.put("message", "La solicitud no pasó validación");
+        body.put("validationErrors", ex.getBindingResult().getFieldErrors()
+                .stream().map(f -> f.getField() + ": " + f.getDefaultMessage()).toList());
+        return ResponseEntity.badRequest().body(body);
+    }
+
 
     @PostMapping("/confirm-holiday-assignment")
     public ResponseEntity<AssignmentResult> confirmHolidayAssignment(
@@ -73,6 +180,7 @@ public class EmployeeScheduleController {
         ValidationResult result = employeeScheduleService.validateAssignmentOnly(request);
         return ResponseEntity.ok(result);
     }
+
 
     // =================== SCHEDULE QUERIES ===================
 

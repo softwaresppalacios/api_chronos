@@ -1,19 +1,16 @@
 package sp.sistemaspalacios.api_chronos.service.employeeAttendance;
 
 import jakarta.transaction.Transactional;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import sp.sistemaspalacios.api_chronos.entity.employeeAttendance.AttendanceType;
 import sp.sistemaspalacios.api_chronos.entity.employeeAttendance.EmployeeAttendance;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
-
 import sp.sistemaspalacios.api_chronos.entity.shift.ShiftDetail;
 import sp.sistemaspalacios.api_chronos.repository.employeeAttendance.EmployeeAttendanceRepository;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleRepository;
 
 import java.util.Calendar;
 import java.util.Date;
-import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -107,9 +104,6 @@ public class EmployeeAttendanceService {
     }
 
 
-    public List<EmployeeAttendance> getAttendancesBySchedule(EmployeeSchedule schedule) {
-        return repository.findByEmployeeSchedule(schedule);
-    }
 
     // Método para obtener el turno del empleado en función de la hora actual
     private Optional<ShiftDetail> getShiftForCurrentTime(EmployeeSchedule schedule) {

@@ -7,6 +7,9 @@ import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.Instant;
 
 @Entity
 @Table(name = "employee_schedules")
@@ -31,7 +34,7 @@ public class EmployeeSchedule {
     @OneToMany(mappedBy = "employeeSchedule", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<EmployeeScheduleDay> days = new ArrayList<>();
 
-    // MODIFICACIÓN IMPORTANTE: Columna para almacenar el ID de days
+    // Columna para almacenar el ID de days
     @Column(name = "days_parent_id")
     private Long daysParentId;
 
@@ -43,12 +46,12 @@ public class EmployeeSchedule {
     @Temporal(TemporalType.TIMESTAMP)
     private Date updatedAt;
 
-    //  FIX: Constructor que inicializa la lista
+    // Constructor que inicializa la lista
     public EmployeeSchedule() {
         this.days = new ArrayList<>();
     }
 
-    // FIX: Getter que asegura lista mutable
+    // Getter que asegura lista mutable
     public List<EmployeeScheduleDay> getDays() {
         if (days == null) {
             days = new ArrayList<>();
@@ -56,5 +59,19 @@ public class EmployeeSchedule {
         return days;
     }
 
+    // ====== AUTO-POBLAR FECHAS DE AUDITORÍA ======
+    @PrePersist
+    protected void onCreate() {
+        ZoneId zone = ZoneId.systemDefault(); // ajusta si necesitas una zona específica
+        // created_at = hoy a las 00:00
+        Instant todayAt00 = LocalDate.now(zone).atStartOfDay(zone).toInstant();
+        this.createdAt = Date.from(todayAt00);
+        // updated_at = ahora (o también 00:00 si prefieres)
+        this.updatedAt = new Date();
+    }
 
+    @PreUpdate
+    protected void onUpdate() {
+        this.updatedAt = new Date();
+    }
 }

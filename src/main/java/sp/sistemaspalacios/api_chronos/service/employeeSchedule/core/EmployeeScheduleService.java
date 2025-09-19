@@ -3,7 +3,6 @@ package sp.sistemaspalacios.api_chronos.service.employeeSchedule.core;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import sp.sistemaspalacios.api_chronos.dto.employee.EmployeeHoursSummaryDTO;
-import sp.sistemaspalacios.api_chronos.dto.employee.EmployeeResponse;
 import sp.sistemaspalacios.api_chronos.dto.employee.EmployeeScheduleDTO;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.AssignmentRequest;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.AssignmentResult;
@@ -191,13 +190,6 @@ public class EmployeeScheduleService {
         return scheduleAssignmentService.createMultipleSchedules(schedules);
     }
 
-    // =================== DATOS DE EMPLEADOS ===================
-
-    public EmployeeResponse getEmployeeData(Long employeeId) {
-        return employeeDataService.getEmployeeData(employeeId);
-    }
-
-    // =================== VALIDACIONES INTERNAS ===================
 
     private void validateSchedule(EmployeeSchedule schedule) {
         if (schedule.getEmployeeId() == null || schedule.getEmployeeId() <= 0)
@@ -326,7 +318,7 @@ public class EmployeeScheduleService {
         }
     }
 
-    // Método helper para determinar el tipo de día basado en el resultado completo
+
     private String determineDayTypeFromCompleteResult(LocalDate date, Map<String, BigDecimal> specialHours, Long employeeId) {
 
         // Verificar exenciones

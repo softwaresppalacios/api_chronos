@@ -132,10 +132,14 @@ public class ScheduleDayGeneratorService {
                 String sStr = normalizeTimeForDatabase(finalStartTime);
                 String eStr = normalizeTimeForDatabase(finalEndTime);
 
+                // FIXED: Validar y crear Time objects de forma segura
+                Time startTime = safeTimeValueOf(sStr, "08:00:00"); // Default a 8 AM
+                Time endTime = safeTimeValueOf(eStr, "17:00:00");   // Default a 5 PM
+
                 EmployeeScheduleTimeBlock tb = new EmployeeScheduleTimeBlock();
                 tb.setEmployeeScheduleDay(day);
-                tb.setStartTime(Time.valueOf(sStr));
-                tb.setEndTime(Time.valueOf(eStr));
+                tb.setStartTime(startTime);
+                tb.setEndTime(endTime);
                 tb.setCreatedAt(new Date());
 
                 day.getTimeBlocks().add(tb);
@@ -145,7 +149,49 @@ public class ScheduleDayGeneratorService {
         }
     }
 
+    // NUEVO: Método helper para crear Time objects de forma segura
+    private Time safeTimeValueOf(String timeString, String defaultTime) {
+        if (timeString == null || timeString.trim().isEmpty()) {
+            System.err.println("WARNING: Time string is null or empty, using default " + defaultTime);
+            return Time.valueOf(defaultTime);
+        }
 
+        try {
+            String normalizedTime = normalizeTimeString(timeString.trim());
+            return Time.valueOf(normalizedTime);
+        } catch (IllegalArgumentException e) {
+            System.err.println("WARNING: Invalid time format '" + timeString + "', using default " + defaultTime);
+            System.err.println("Error details: " + e.getMessage());
+            return Time.valueOf(defaultTime);
+        }
+    }
+    // NUEVO: Método para normalizar formato de tiempo
+    private String normalizeTimeString(String timeStr) {
+        if (timeStr == null || timeStr.trim().isEmpty()) {
+            return "00:00:00";
+        }
+
+        timeStr = timeStr.trim();
+
+        // Si ya tiene formato HH:mm:ss
+        if (timeStr.matches("\\d{2}:\\d{2}:\\d{2}")) {
+            return timeStr;
+        }
+
+        // Si tiene formato HH:mm, agregar segundos
+        if (timeStr.matches("\\d{2}:\\d{2}")) {
+            return timeStr + ":00";
+        }
+
+        // Si tiene formato H:mm, agregar cero inicial y segundos
+        if (timeStr.matches("\\d{1}:\\d{2}")) {
+            return "0" + timeStr + ":00";
+        }
+
+        // Si no coincide con ningún patrón, usar default
+        System.err.println("WARNING: Unrecognized time format '" + timeStr + "', using 00:00:00");
+        return "00:00:00";
+    }
 
     private static boolean equalsIgnoreCaseNoAccents(String a, String b){
         if (a == null || b == null) return false;
@@ -153,7 +199,6 @@ public class ScheduleDayGeneratorService {
         String nb = Normalizer.normalize(b, Normalizer.Form.NFD).replaceAll("\\p{M}","");
         return na.equalsIgnoreCase(nb);
     }
-
 
     private String determineSegmentName(String startTime) {
         try {
@@ -166,12 +211,9 @@ public class ScheduleDayGeneratorService {
         }
     }
 
-
     private static String stringOf(Object o){ return o==null? null : o.toString(); }
     private static boolean isBlank(String s){ return s==null || s.trim().isEmpty(); }
     private String normalizeTimeForDatabase(String time) {
         return timeService.normalizeTimeForDatabase(time);
     }
-
-
 }

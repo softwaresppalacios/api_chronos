@@ -3,6 +3,8 @@ package sp.sistemaspalacios.api_chronos.service.shift;
 import org.springframework.stereotype.Service;
 import sp.sistemaspalacios.api_chronos.controller.shift.ValidationController;
 import sp.sistemaspalacios.api_chronos.service.boundaries.generalConfiguration.GeneralConfigurationService;
+import sp.sistemaspalacios.api_chronos.service.common.TimeService;
+import sp.sistemaspalacios.api_chronos.service.common.WorkingTimeValidatorService;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -11,93 +13,84 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
-
 @Service
 public class ValidationService {
 
     private final GeneralConfigurationService generalConfigurationService;
     private static final Pattern MILITARY_TIME_PATTERN = Pattern.compile("^([01]?[0-9]|2[0-3]):([0-5][0-9])$");
     private static final Pattern AMPM_TIME_PATTERN = Pattern.compile("^([0]?[1-9]|1[0-2]):[0-5][0-9]\\s*(AM|PM)$");
-
-    public ValidationService(GeneralConfigurationService generalConfigurationService) {
+    private final WorkingTimeValidatorService validator;
+    private final TimeService timeService;
+    public ValidationService(GeneralConfigurationService generalConfigurationService,  WorkingTimeValidatorService validator, TimeService timeService) {
         this.generalConfigurationService = generalConfigurationService;
+        this.validator = validator;
+        this.timeService = timeService;
     }
 
     // ==========================================
-    // VALIDACIÓN DE RANGOS DE TIEMPO
-    // ==========================================
-
-// VERIFICAR en tu ValidationService.java que el método validateTimeRange
-// esté devolviendo errores específicos como estos:
-
+// VALIDACIÓN DE RANGOS DE TIEMPO (robusta 12h/24h)
+// ==========================================
     public Map<String, Object> validateTimeRange(String period, String startTime, String endTime, Double hoursPerDay) {
         Map<String, Object> result = new HashMap<>();
-
         try {
-            // Convertir tiempos AM/PM a formato militar
-            String start24h = convertAmPmTo24h(startTime);
-            String end24h = convertAmPmTo24h(endTime);
+            // 1) Normaliza a 24h solo si viene en 12h; si ya es HH:mm, se respeta
+            String start24h = isValidMilitaryTime(startTime) ? startTime : convertAmPmTo24h(startTime);
+            String end24h   = isValidMilitaryTime(endTime)   ? endTime   : convertAmPmTo24h(endTime);
 
-            // ✅ VALIDAR FORMATOS
-            if (!isValidMilitaryTime(start24h) || !isValidMilitaryTime(end24h)) {
-                result.put("isValid", false);
-                result.put("error", "Formato de hora inválido. Use HH:MM AM/PM");
-                result.put("hours", 0.0);
-                result.put("period", period);
-                return result;
-            }
-
+            // 2) Parseo seguro
             LocalTime startLocalTime = LocalTime.parse(start24h);
-            LocalTime endLocalTime = LocalTime.parse(end24h);
+            LocalTime endLocalTime   = LocalTime.parse(end24h);
 
-            // ✅ CALCULAR DURACIÓN
+            // 3) Duración
             double hours = calculateHoursDuration(startLocalTime, endLocalTime);
 
-            // ✅ VALIDAR COHERENCIA DEL PERÍODO
+            // 4) Coherencia del período
             try {
                 validatePeriodCoherence(period, start24h, end24h);
             } catch (IllegalArgumentException e) {
                 result.put("isValid", false);
-                result.put("error", e.getMessage()); // Mensaje específico del error
+                result.put("error", e.getMessage());
                 result.put("hours", 0.0);
                 result.put("period", period);
                 return result;
             }
 
-            // ✅ VALIDAR LÍMITES DIARIOS
+            // 5) Límite diario si aplica
             if (hoursPerDay != null && hoursPerDay > 0 && hours > hoursPerDay) {
                 result.put("isValid", false);
-                result.put("error", String.format("Las %.1f horas exceden el límite diario de %.1f horas",
-                        hours, hoursPerDay));
+                result.put("error", String.format("Las %.1f horas exceden el límite diario de %.1f horas", hours, hoursPerDay));
                 result.put("hours", hours);
                 result.put("period", period);
                 return result;
             }
 
-            // ✅ VERIFICAR WARNING NOCTURNO
+            // 6) Warning nocturno
             String nightWarning = checkNightShiftWarning(start24h, end24h);
 
-            // ✅ RESPUESTA EXITOSA
+            // 7) OK
             result.put("isValid", true);
             result.put("hours", hours);
             result.put("period", period);
             result.put("startTime24h", start24h);
             result.put("endTime24h", end24h);
-
-            if (nightWarning != null) {
-                result.put("warning", nightWarning);
-            }
+            if (nightWarning != null) result.put("warning", nightWarning);
 
         } catch (Exception e) {
-            // ✅ ERROR ESPECÍFICO
             result.put("isValid", false);
             result.put("error", "Error procesando horario: " + e.getMessage());
             result.put("hours", 0.0);
             result.put("period", period);
         }
-
         return result;
     }
+
+
+    // Convierte la duración en minutos a horas (soporta cruce de medianoche vía calculateMinutesDuration)
+    private double calculateHoursDuration(LocalTime start, LocalTime end) {
+        long minutes = calculateMinutesDuration(start, end);
+        return minutes / 60.0;
+    }
+
     public Map<String, Object> validateDailyTimeRanges(
             Map<String, ValidationController.DailyRangesValidationRequest.TimeRangeData> timeRanges,
             Double hoursPerDay) {
@@ -151,35 +144,28 @@ public class ValidationService {
         return result;
     }
 
-    // ==========================================
-    // VALIDACIÓN DE BREAKS
-    // ==========================================
 
+    // ==========================================
+// VALIDACIÓN DE BREAKS (robusta 12h/24h)
+// ==========================================
     public Map<String, Object> validateBreak(String period, String breakStart, String breakEnd,
                                              String workStart, String workEnd) {
         Map<String, Object> result = new HashMap<>();
-
         try {
-            // Convertir todos los tiempos a formato 24h
-            String breakStart24h = convertAmPmTo24h(breakStart);
-            String breakEnd24h = convertAmPmTo24h(breakEnd);
-            String workStart24h = convertAmPmTo24h(workStart);
-            String workEnd24h = convertAmPmTo24h(workEnd);
+            String breakStart24h = isValidMilitaryTime(breakStart) ? breakStart : convertAmPmTo24h(breakStart);
+            String breakEnd24h   = isValidMilitaryTime(breakEnd)   ? breakEnd   : convertAmPmTo24h(breakEnd);
+            String workStart24h  = isValidMilitaryTime(workStart)  ? workStart  : convertAmPmTo24h(workStart);
+            String workEnd24h    = isValidMilitaryTime(workEnd)    ? workEnd    : convertAmPmTo24h(workEnd);
 
             LocalTime breakStartTime = LocalTime.parse(breakStart24h);
-            LocalTime breakEndTime = LocalTime.parse(breakEnd24h);
-            LocalTime workStartTime = LocalTime.parse(workStart24h);
-            LocalTime workEndTime = LocalTime.parse(workEnd24h);
+            LocalTime breakEndTime   = LocalTime.parse(breakEnd24h);
+            LocalTime workStartTime  = LocalTime.parse(workStart24h);
+            LocalTime workEndTime    = LocalTime.parse(workEnd24h);
 
-            // Validar que el break esté dentro del horario laboral
             validateBreakWithinWorkHours(breakStartTime, breakEndTime, workStartTime, workEndTime);
-
-            // Validar coherencia del período
             validateBreakPeriodCoherence(period, breakStart);
 
-            // Calcular duración del break
             long breakMinutes = ChronoUnit.MINUTES.between(breakStartTime, breakEndTime);
-
             result.put("isValid", true);
             result.put("breakDurationMinutes", breakMinutes);
             result.put("breakStart24h", breakStart24h);
@@ -189,40 +175,32 @@ public class ValidationService {
             result.put("isValid", false);
             result.put("error", e.getMessage());
         }
-
         return result;
     }
-
     // ==========================================
-    // CÁLCULO DE HORAS
-    // ==========================================
-
+// CÁLCULO DE HORAS NETAS (restando break si viene)
+// ==========================================
     public Map<String, Object> calculateTotalHours(List<ValidationController.HoursCalculationRequest.ShiftDetailData> shiftDetails) {
         Map<String, Object> result = new HashMap<>();
-
         try {
-            double totalHours = 0.0;
             int totalMinutes = 0;
             int totalBreakMinutes = 0;
 
             for (ValidationController.HoursCalculationRequest.ShiftDetailData detail : shiftDetails) {
-                // Convertir tiempos a 24h
-                String start24h = convertAmPmTo24h(detail.getStartTime());
-                String end24h = convertAmPmTo24h(detail.getEndTime());
+                String start24h = isValidMilitaryTime(detail.getStartTime()) ? detail.getStartTime() : convertAmPmTo24h(detail.getStartTime());
+                String end24h   = isValidMilitaryTime(detail.getEndTime())   ? detail.getEndTime()   : convertAmPmTo24h(detail.getEndTime());
 
                 LocalTime startTime = LocalTime.parse(start24h);
-                LocalTime endTime = LocalTime.parse(end24h);
+                LocalTime endTime   = LocalTime.parse(end24h);
 
-                // Calcular duración laboral
                 long workMinutes = calculateMinutesDuration(startTime, endTime);
 
-                // Restar break si existe
                 if (detail.getBreakStartTime() != null && detail.getBreakEndTime() != null) {
-                    String breakStart24h = convertAmPmTo24h(detail.getBreakStartTime());
-                    String breakEnd24h = convertAmPmTo24h(detail.getBreakEndTime());
+                    String breakStart24h = isValidMilitaryTime(detail.getBreakStartTime()) ? detail.getBreakStartTime() : convertAmPmTo24h(detail.getBreakStartTime());
+                    String breakEnd24h   = isValidMilitaryTime(detail.getBreakEndTime())   ? detail.getBreakEndTime()   : convertAmPmTo24h(detail.getBreakEndTime());
 
                     LocalTime breakStart = LocalTime.parse(breakStart24h);
-                    LocalTime breakEnd = LocalTime.parse(breakEnd24h);
+                    LocalTime breakEnd   = LocalTime.parse(breakEnd24h);
 
                     long breakDuration = ChronoUnit.MINUTES.between(breakStart, breakEnd);
                     workMinutes -= breakDuration;
@@ -232,36 +210,37 @@ public class ValidationService {
                 totalMinutes += workMinutes;
             }
 
-            totalHours = totalMinutes / 60.0;
-
+            double totalHours = totalMinutes / 60.0;
             result.put("totalHours", totalHours);
             result.put("totalMinutes", totalMinutes);
             result.put("totalBreakMinutes", totalBreakMinutes);
             result.put("netWorkMinutes", totalMinutes);
-
         } catch (Exception e) {
             result.put("error", e.getMessage());
             result.put("totalHours", 0.0);
             result.put("totalMinutes", 0);
         }
-
         return result;
     }
 
     // ==========================================
-    // CONVERSIÓN DE FORMATOS
-    // ==========================================
-
+// CONVERSIÓN DE FORMATO (12h <-> 24h) robusta
+// ==========================================
     public Map<String, Object> convertTimeFormat(String time, String targetFormat) {
         Map<String, Object> result = new HashMap<>();
-
         try {
+            String cleaned = (time == null ? "" : time).replaceAll("\\p{Zs}+", " ").replaceAll("\\s+", " ").trim();
             String convertedTime;
 
-            if ("24h".equals(targetFormat)) {
-                convertedTime = convertAmPmTo24h(time);
-            } else if ("12h".equals(targetFormat)) {
-                convertedTime = convert24hToAmPm(time);
+            if ("24h".equalsIgnoreCase(targetFormat)) {
+                convertedTime = isValidMilitaryTime(cleaned) ? cleaned : convertAmPmTo24h(cleaned);
+            } else if ("12h".equalsIgnoreCase(targetFormat)) {
+                // si ya viene con AM/PM devolver igual
+                if (cleaned.toUpperCase().matches("^\\d{1,2}:\\d{2}\\s*(AM|PM)$")) {
+                    convertedTime = cleaned.toUpperCase().replaceAll("\\s+", " ");
+                } else {
+                    convertedTime = convert24hToAmPm(cleaned);
+                }
             } else {
                 throw new IllegalArgumentException("Formato objetivo debe ser '24h' o '12h'");
             }
@@ -269,18 +248,16 @@ public class ValidationService {
             result.put("originalTime", time);
             result.put("convertedTime", convertedTime);
             result.put("targetFormat", targetFormat);
-
         } catch (Exception e) {
             result.put("error", e.getMessage());
             result.put("convertedTime", "");
         }
-
         return result;
     }
 
-    // ==========================================
-    // MÉTODOS AUXILIARES PRIVADOS
-    // ==========================================
+
+
+
 
     private String convertAmPmTo24h(String time12h) {
         if (time12h == null || time12h.trim().isEmpty()) {
@@ -323,10 +300,7 @@ public class ValidationService {
         return time != null && MILITARY_TIME_PATTERN.matcher(time).matches();
     }
 
-    private double calculateHoursDuration(LocalTime start, LocalTime end) {
-        long minutes = calculateMinutesDuration(start, end);
-        return minutes / 60.0;
-    }
+
 
     private long calculateMinutesDuration(LocalTime start, LocalTime end) {
         if (end.isBefore(start)) {
