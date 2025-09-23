@@ -30,32 +30,6 @@ public class HolidayProcessingService {
         this.timeService = timeService;
     }
 
-    public List<HolidayWarning> detectHolidayWarnings(List<ScheduleAssignment> assignments) {
-        List<HolidayWarning> warnings = new ArrayList<>();
-        for (ScheduleAssignment assignment : assignments) {
-            LocalDate start = assignment.getStartDate();
-            LocalDate end = (assignment.getEndDate() != null) ? assignment.getEndDate() : start;
-
-            Shifts shift = shiftsRepository.findById(assignment.getShiftId()).orElse(null);
-            if (shift == null || shift.getShiftDetails() == null) continue;
-
-            String employeeName = employeeDataService.getEmployeeName(assignment.getEmployeeId());
-
-            for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
-                if (holidayService.isHoliday(d)) {
-                    HolidayWarning warning = new HolidayWarning();
-                    warning.setEmployeeId(assignment.getEmployeeId());
-                    warning.setEmployeeName(employeeName);
-                    warning.setHolidayDate(d);
-                    warning.setHolidayName(holidayService.getHolidayName(d));
-                    warning.setShiftSegments(calculateShiftSegmentsForDay(shift, d));
-                    warning.setRequiresConfirmation(true);
-                    warnings.add(warning);
-                }
-            }
-        }
-        return warnings;
-    }
 
     private List<ShiftSegmentDetail> calculateShiftSegmentsForDay(Shifts shift, LocalDate date) {
         List<ShiftSegmentDetail> segments = new ArrayList<>();
@@ -98,4 +72,106 @@ public class HolidayProcessingService {
             return "Turno";
         }
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    public List<HolidayWarning> detectHolidayWarnings(List<ScheduleAssignment> assignments) {
+        List<HolidayWarning> warnings = new ArrayList<>();
+
+        for (ScheduleAssignment assignment : assignments) {
+            LocalDate start = assignment.getStartDate();
+            LocalDate end = (assignment.getEndDate() != null) ? assignment.getEndDate() : start;
+
+            Shifts shift = shiftsRepository.findById(assignment.getShiftId()).orElse(null);
+            if (shift == null || shift.getShiftDetails() == null) continue;
+
+            String employeeName = employeeDataService.getEmployeeName(assignment.getEmployeeId());
+
+            for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+                if (holidayService.isHoliday(d)) {
+
+                    // ✅ NUEVA VALIDACIÓN: Solo crear warning si el turno trabaja este día
+                    if (shiftWorksOnDay(shift, d)) {
+                        HolidayWarning warning = new HolidayWarning();
+                        warning.setEmployeeId(assignment.getEmployeeId());
+                        warning.setEmployeeName(employeeName);
+                        warning.setHolidayDate(d);
+                        warning.setHolidayName(holidayService.getHolidayName(d));
+                        warning.setShiftSegments(calculateShiftSegmentsForDay(shift, d));
+                        warning.setRequiresConfirmation(true);
+                        warnings.add(warning);
+                    }
+                }
+            }
+        }
+        return warnings;
+    }
+
+    // AGREGAR ESTE MÉTODO NUEVO
+    private boolean shiftWorksOnDay(Shifts shift, LocalDate date) {
+        int dayOfWeek = date.getDayOfWeek().getValue(); // 1=Monday, 7=Sunday
+
+        return shift.getShiftDetails().stream()
+                .anyMatch(detail ->
+                        Objects.equals(detail.getDayOfWeek(), dayOfWeek) &&
+                                detail.getStartTime() != null &&
+                                detail.getEndTime() != null &&
+                                !detail.getStartTime().trim().isEmpty() &&
+                                !detail.getEndTime().trim().isEmpty()
+                );
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }

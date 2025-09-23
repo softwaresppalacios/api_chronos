@@ -13,6 +13,7 @@ import sp.sistemaspalacios.api_chronos.service.employeeSchedule.holiday.HolidayE
 import java.sql.Time;
 import java.text.Normalizer;
 import java.time.LocalDate;
+import java.time.ZoneId;               // <-- IMPORT NECESARIO
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -32,15 +33,18 @@ public class ScheduleDayGeneratorService {
     }
 
     public void generateScheduleDaysWithHolidayDecisions(EmployeeSchedule schedule, List<ScheduleDto.HolidayDecision> holidayDecisions) {
+        System.out.println("=== GENERANDO DÍAS ===");
+        System.out.println("Schedule start date type: " + (schedule.getStartDate() != null ? schedule.getStartDate().getClass().getName() : "null"));
+        System.out.println("Schedule start date value: " + schedule.getStartDate());
+        System.out.println("Schedule end date type: " + (schedule.getEndDate() != null ? schedule.getEndDate().getClass().getName() : "null"));
+        System.out.println("Schedule end date value: " + schedule.getEndDate());
+
         if (schedule.getDays() == null) schedule.setDays(new ArrayList<>());
         else schedule.getDays().clear();
 
-        LocalDate startDate = (schedule.getStartDate() != null)
-                ? ((java.sql.Date) schedule.getStartDate()).toLocalDate()
-                : null;
-        LocalDate endDate = (schedule.getEndDate() != null)
-                ? ((java.sql.Date) schedule.getEndDate()).toLocalDate()
-                : startDate;
+        // ✅ start/end ya son LocalDate en EmployeeSchedule
+        LocalDate startDate = schedule.getStartDate();
+        LocalDate endDate   = (schedule.getEndDate() != null) ? schedule.getEndDate() : startDate;
 
         if (startDate == null) throw new IllegalStateException("StartDate es requerido");
         if (endDate == null) endDate = startDate;
@@ -49,30 +53,25 @@ public class ScheduleDayGeneratorService {
                 ? schedule.getShift().getShiftDetails()
                 : Collections.emptyList();
 
-        Map<LocalDate, ScheduleDto.HolidayDecision> decisionMap = (holidayDecisions != null ? holidayDecisions : Collections.<ScheduleDto.HolidayDecision>emptyList())
-                .stream()
-                .filter(Objects::nonNull)
-                .filter(h -> h.getHolidayDate() != null)
-                .collect(Collectors.toMap(ScheduleDto.HolidayDecision::getHolidayDate, h -> h, (a, b) -> a));
+        Map<LocalDate, ScheduleDto.HolidayDecision> decisionMap =
+                (holidayDecisions != null ? holidayDecisions : Collections.<ScheduleDto.HolidayDecision>emptyList())
+                        .stream()
+                        .filter(Objects::nonNull)
+                        .filter(h -> h.getHolidayDate() != null)
+                        .collect(Collectors.toMap(ScheduleDto.HolidayDecision::getHolidayDate, h -> h, (a, b) -> a));
 
         for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
             ScheduleDto.HolidayDecision decision = decisionMap.get(d);
 
-            // PASO 1: GUARDAR EXENCIONES PRIMERO (independientemente de si se crea el día)
+            // PASO 1: exenciones
             if (decision != null) {
                 try {
-                    System.out.println("Procesando decisión de festivo para " + d);
-                    System.out.println("  - Razón de exención: '" + decision.getExemptionReason() + "'");
-                    System.out.println("  - Aplicar recargo: " + decision.isApplyHolidayCharge());
-
                     if (decision.getExemptionReason() != null && !decision.getExemptionReason().isBlank()) {
-                        System.out.println("  - Guardando exención con razón personalizada");
                         holidayExemptionService.saveExemption(
                                 schedule.getEmployeeId(), d, holidayService.getHolidayName(d),
                                 decision.getExemptionReason(), null
                         );
                     } else if (!decision.isApplyHolidayCharge()) {
-                        System.out.println("  - Guardando exención por no aplicar recargo");
                         holidayExemptionService.saveExemption(
                                 schedule.getEmployeeId(), d, holidayService.getHolidayName(d),
                                 "NO_APLICAR_RECARGO", null
@@ -84,21 +83,18 @@ public class ScheduleDayGeneratorService {
                 }
             }
 
-            // PASO 2: DECIDIR SI CREAR EL DÍA DE TRABAJO
+            // PASO 2: ¿se crea el día?
             boolean skipDayCreation = decision != null &&
                     decision.getExemptionReason() != null &&
                     !decision.getExemptionReason().isBlank() &&
                     !decision.isApplyHolidayCharge();
 
-            if (skipDayCreation) {
-                System.out.println("  - Saltando creación de día (empleado no trabaja)");
-                continue;
-            }
+            if (skipDayCreation) continue;
 
-            // PASO 3: CREAR EL DÍA DE TRABAJO
+            // PASO 3: crear día
             EmployeeScheduleDay day = new EmployeeScheduleDay();
             day.setEmployeeSchedule(schedule);
-            day.setDate(java.sql.Date.valueOf(d));
+            day.setDate(java.sql.Date.valueOf(d));            // ← LocalDate -> java.sql.Date
             day.setDayOfWeek(d.getDayOfWeek().getValue());
             day.setCreatedAt(new Date());
             day.setTimeBlocks(new ArrayList<>());
@@ -120,10 +116,10 @@ public class ScheduleDayGeneratorService {
                         String expected = determineSegmentName(sd.getStartTime());
 
                         if (equalsIgnoreCaseNoAccents(segName, expected)) {
-                            String s  = stringOf(seg.get("startTime"));
-                            String e  = stringOf(seg.get("endTime"));
-                            if (!isBlank(s))  finalStartTime = s;
-                            if (!isBlank(e))  finalEndTime   = e;
+                            String s = stringOf(seg.get("startTime"));
+                            String e = stringOf(seg.get("endTime"));
+                            if (!isBlank(s)) finalStartTime = s;
+                            if (!isBlank(e)) finalEndTime = e;
                             break;
                         }
                     }
@@ -132,9 +128,8 @@ public class ScheduleDayGeneratorService {
                 String sStr = normalizeTimeForDatabase(finalStartTime);
                 String eStr = normalizeTimeForDatabase(finalEndTime);
 
-                // FIXED: Validar y crear Time objects de forma segura
-                Time startTime = safeTimeValueOf(sStr, "08:00:00"); // Default a 8 AM
-                Time endTime = safeTimeValueOf(eStr, "17:00:00");   // Default a 5 PM
+                Time startTime = safeTimeValueOf(sStr, "08:00:00");
+                Time endTime   = safeTimeValueOf(eStr, "17:00:00");
 
                 EmployeeScheduleTimeBlock tb = new EmployeeScheduleTimeBlock();
                 tb.setEmployeeScheduleDay(day);
@@ -149,47 +144,33 @@ public class ScheduleDayGeneratorService {
         }
     }
 
-    // NUEVO: Método helper para crear Time objects de forma segura
+    // ==== Helpers ====
+
+    private static LocalDate toLocalDate(Date date) {
+        if (date == null) return null;
+        if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
+        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
     private Time safeTimeValueOf(String timeString, String defaultTime) {
         if (timeString == null || timeString.trim().isEmpty()) {
-            System.err.println("WARNING: Time string is null or empty, using default " + defaultTime);
             return Time.valueOf(defaultTime);
         }
-
         try {
             String normalizedTime = normalizeTimeString(timeString.trim());
             return Time.valueOf(normalizedTime);
         } catch (IllegalArgumentException e) {
             System.err.println("WARNING: Invalid time format '" + timeString + "', using default " + defaultTime);
-            System.err.println("Error details: " + e.getMessage());
             return Time.valueOf(defaultTime);
         }
     }
-    // NUEVO: Método para normalizar formato de tiempo
+
     private String normalizeTimeString(String timeStr) {
-        if (timeStr == null || timeStr.trim().isEmpty()) {
-            return "00:00:00";
-        }
-
+        if (timeStr == null || timeStr.trim().isEmpty()) return "00:00:00";
         timeStr = timeStr.trim();
-
-        // Si ya tiene formato HH:mm:ss
-        if (timeStr.matches("\\d{2}:\\d{2}:\\d{2}")) {
-            return timeStr;
-        }
-
-        // Si tiene formato HH:mm, agregar segundos
-        if (timeStr.matches("\\d{2}:\\d{2}")) {
-            return timeStr + ":00";
-        }
-
-        // Si tiene formato H:mm, agregar cero inicial y segundos
-        if (timeStr.matches("\\d{1}:\\d{2}")) {
-            return "0" + timeStr + ":00";
-        }
-
-        // Si no coincide con ningún patrón, usar default
-        System.err.println("WARNING: Unrecognized time format '" + timeStr + "', using 00:00:00");
+        if (timeStr.matches("\\d{2}:\\d{2}:\\d{2}")) return timeStr;
+        if (timeStr.matches("\\d{2}:\\d{2}")) return timeStr + ":00";
+        if (timeStr.matches("\\d{1}:\\d{2}")) return "0" + timeStr + ":00";
         return "00:00:00";
     }
 

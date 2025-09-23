@@ -58,12 +58,6 @@ public class ScheduleCalculationService {
     }
 
     @Transactional
-    public void recalculateGroupTotalsForEmployee(Long employeeId) {
-        log.info("Recalculando totales para empleado: {}", employeeId);
-        // Implementación básica - expandir según necesites
-    }
-
-    @Transactional
     public void cleanupEmptyDaysForEmployee(Long employeeId) {
         List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(employeeId);
 
@@ -121,4 +115,3 @@ public class ScheduleCalculationService {
     }
 }
 
-// =================== TimeBlockService SIMPLE ===================

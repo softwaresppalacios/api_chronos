@@ -84,8 +84,8 @@ public class ScheduleValidationService {
     private ScheduleConflict checkForConflictWithTimeOverlap(ScheduleAssignment assignment, EmployeeSchedule existing) {
         LocalDate newStart = assignment.getStartDate();
         LocalDate newEnd = (assignment.getEndDate() != null) ? assignment.getEndDate() : newStart;
-        LocalDate existingStart = timeService.toLocalDate(existing.getStartDate());
-        LocalDate existingEnd = (existing.getEndDate() != null) ? timeService.toLocalDate(existing.getEndDate()) : existingStart;
+        LocalDate existingStart = existing.getStartDate();
+        LocalDate existingEnd = (existing.getEndDate() != null) ? existing.getEndDate() : existingStart;
 
         if (!datesOverlap(newStart, newEnd, existingStart, existingEnd)) return null;
 

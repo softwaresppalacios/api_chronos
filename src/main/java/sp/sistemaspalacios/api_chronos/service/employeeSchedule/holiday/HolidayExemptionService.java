@@ -22,9 +22,7 @@ public class HolidayExemptionService {
 
 
 
-    @org.springframework.transaction.annotation.Transactional(
-            propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW
-    )
+
     public HolidayExemptionDTO saveExemption(Long employeeId, LocalDate holidayDate,
                                              String holidayName, String exemptionReason,
                                              Long scheduleAssignmentGroupId) {

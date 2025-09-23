@@ -154,9 +154,8 @@ public class ScheduleQueryService {
                 .filter(schedule -> {
                     // Filtro por rango de fechas
                     if (startDate != null || endDate != null) {
-                        LocalDate scheduleStart = convertToLocalDate(schedule.getStartDate());
-                        LocalDate scheduleEnd = schedule.getEndDate() != null ?
-                                convertToLocalDate(schedule.getEndDate()) : scheduleStart;
+                        LocalDate scheduleStart = schedule.getStartDate();
+                        LocalDate scheduleEnd = (schedule.getEndDate() != null) ? schedule.getEndDate() : scheduleStart;
 
                         if (scheduleStart == null) return false;
 

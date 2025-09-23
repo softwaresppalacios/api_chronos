@@ -25,11 +25,9 @@ public class EmployeeSchedule {
     @JoinColumn(name = "shift_id", nullable = false)
     private Shifts shift;
 
-    @Temporal(TemporalType.DATE)
-    private Date startDate;
+    private LocalDate startDate;
+    private LocalDate endDate;
 
-    @Temporal(TemporalType.DATE)
-    private Date endDate;
 
     @OneToMany(mappedBy = "employeeSchedule", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<EmployeeScheduleDay> days = new ArrayList<>();

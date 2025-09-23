@@ -71,7 +71,7 @@ public class EmployeeScheduleService {
 
     // =================== ASIGNACIONES (DELEGADAS) ===================
 
-    @Transactional
+
     public AssignmentResult processMultipleAssignments(AssignmentRequest request) {
         return scheduleAssignmentService.processMultipleAssignments(request);
     }
@@ -116,12 +116,13 @@ public class EmployeeScheduleService {
             java.time.LocalTime startTime,
             Long shiftId
     ) {
-        if (dependencyId == null) {
-            return Collections.emptyList();
-        }
-
         try {
-            System.out.println("Buscando schedules para dependencyId: " + dependencyId);
+            System.out.println("Buscando schedules con parámetros:");
+            System.out.println("- dependencyId: " + (dependencyId != null ? dependencyId : "TODAS"));
+            System.out.println("- startDate: " + startDate);
+            System.out.println("- endDate: " + endDate);
+            System.out.println("- startTime: " + startTime);
+            System.out.println("- shiftId: " + shiftId);
 
             // Delegar al ScheduleQueryService
             return scheduleQueryService.getSchedulesByDependencyId(dependencyId, startDate, endDate, startTime, shiftId);
@@ -198,125 +199,12 @@ public class EmployeeScheduleService {
             throw new IllegalArgumentException("Shift ID es obligatorio y debe ser un número válido.");
         if (schedule.getStartDate() == null)
             throw new IllegalArgumentException("La fecha de inicio es obligatoria.");
-        if (schedule.getEndDate() != null && schedule.getStartDate().after(schedule.getEndDate()))
+        if (schedule.getEndDate() != null && schedule.getStartDate().isAfter(schedule.getEndDate()))
             throw new IllegalArgumentException("La fecha de inicio debe ser anterior a la fecha de fin.");
     }
 
 
 
-    public Map<String, Object> getDailyBreakdown(Long employeeId) {
-        try {
-            // 1. Obtener resumen consolidado
-            EmployeeHoursSummaryDTO summary = calculateEmployeeHoursSummary(employeeId);
-
-            // 2. Obtener schedules
-            List<EmployeeScheduleDTO> schedules = getCompleteSchedulesByEmployeeId(employeeId);
-
-            // 3. NUEVA ESTRATEGIA: Clasificar todos los schedules juntos
-            List<EmployeeSchedule> allScheduleEntities = schedules.stream()
-                    .map(dto -> employeeScheduleRepository.findById(dto.getId()).orElse(null))
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-
-            // Obtener clasificación completa de TODOS los schedules juntos
-            Map<String, BigDecimal> completeClassification = hourClassificationService.classifyScheduleHours(allScheduleEntities);
-
-            System.out.println("CLASIFICACIÓN COMPLETA DE TODOS LOS SCHEDULES:");
-            completeClassification.forEach((type, hours) -> {
-                if (hours.compareTo(BigDecimal.ZERO) > 0) {
-                    System.out.println("  " + type + ": " + hours + "h");
-                }
-            });
-
-            // 4. Identificar días que contribuyen a las horas especiales
-            List<Map<String, Object>> dailyDetails = new ArrayList<>();
-
-            // Solo buscar tipos especiales del resultado completo
-            Map<String, BigDecimal> specialHours = completeClassification.entrySet().stream()
-                    .filter(entry -> isSpecialHourType(entry.getKey()) && entry.getValue().compareTo(BigDecimal.ZERO) > 0)
-                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-            if (!specialHours.isEmpty()) {
-                // Encontrar días que tienen horas trabajadas y podrían contribuir a las horas especiales
-                for (EmployeeScheduleDTO schedule : schedules) {
-                    Map<String, Object> days = (Map<String, Object>) schedule.getDays();
-                    List<Map<String, Object>> dayItems = (List<Map<String, Object>>) days.get("items");
-
-                    for (Map<String, Object> day : dayItems) {
-                        String dateStr = (String) day.get("date");
-                        LocalDate date = LocalDate.parse(dateStr);
-
-                        // Verificar si este día tiene bloques de tiempo
-                        List<Map<String, Object>> timeBlocks = (List<Map<String, Object>>) day.get("timeBlocks");
-                        if (timeBlocks != null && !timeBlocks.isEmpty()) {
-
-                            // Calcular horas del día
-                            double totalDayHours = 0.0;
-                            List<Map<String, Object>> blockDetails = new ArrayList<>();
-
-                            for (Map<String, Object> block : timeBlocks) {
-                                String startTime = (String) block.get("startTime");
-                                String endTime = (String) block.get("endTime");
-                                double blockHours = calculateHours(startTime, endTime);
-                                totalDayHours += blockHours;
-
-                                Map<String, Object> blockDetail = new HashMap<>();
-                                blockDetail.put("startTime", startTime.substring(0, 5));
-                                blockDetail.put("endTime", endTime.substring(0, 5));
-                                blockDetail.put("hours", blockHours);
-                                blockDetails.add(blockDetail);
-                            }
-
-                            if (totalDayHours > 0) {
-                                // Determinar si este día podría tener horas especiales
-                                String dayType = determineDayTypeFromCompleteResult(date, specialHours, employeeId);
-
-                                if (!dayType.equals("REGULAR")) {
-                                    Map<String, Object> dayDetail = new HashMap<>();
-                                    dayDetail.put("date", dateStr);
-                                    dayDetail.put("dayOfWeek", date.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.forLanguageTag("es")));
-                                    dayDetail.put("shiftName", schedule.getShiftName());
-                                    dayDetail.put("hourType", dayType);
-                                    dayDetail.put("totalHours", totalDayHours);
-                                    dayDetail.put("timeBlocks", blockDetails);
-
-                                    // Información adicional
-                                    if (holidayService.isHoliday(date)) {
-                                        dayDetail.put("isHoliday", true);
-                                        dayDetail.put("holidayName", holidayService.getHolidayName(date));
-                                    }
-
-                                    if (holidayExemptionService.hasExemption(employeeId, date)) {
-                                        dayDetail.put("hasExemption", true);
-                                        dayDetail.put("exemptionReason", holidayExemptionService.getExemptionReason(employeeId, date));
-                                    }
-
-                                    dailyDetails.add(dayDetail);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Respuesta completa
-            Map<String, Object> response = new HashMap<>();
-            response.put("employeeId", employeeId);
-            response.put("employeeName", employeeDataService.getEmployeeName(employeeId));
-            response.put("totalHours", summary.getTotalHours());
-            response.put("regularHours", summary.getRegularHours());
-            response.put("overtimeHours", summary.getOvertimeHours());
-            response.put("festivoHours", summary.getFestivoHours());
-            response.put("overtimeType", summary.getOvertimeType());
-            response.put("festivoType", summary.getFestivoType());
-            response.put("dailyDetails", dailyDetails);
-
-            return response;
-
-        } catch (Exception e) {
-            throw new RuntimeException("Error obteniendo breakdown diario", e);
-        }
-    }
 
 
     private String determineDayTypeFromCompleteResult(LocalDate date, Map<String, BigDecimal> specialHours, Long employeeId) {
@@ -376,8 +264,8 @@ public class EmployeeScheduleService {
                 type.startsWith("FESTIVO_") ||
                 type.startsWith("DOMINICAL_") ||
                 type.equals("EXEMPT") ||
-                // No incluir tipos REGULAR_
-                (!type.startsWith("REGULAR_"));
+                // NO incluir tipos REGULAR_
+                (!type.startsWith("REGULAR_") && !type.equals("REGULAR"));
     }
 
     // Métodos helper en el servicio
@@ -444,4 +332,231 @@ public class EmployeeScheduleService {
         System.out.println("=== FIN DIAGNÓSTICO ===");
     }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    public Map<String, Object> getDailyBreakdown(Long employeeId) {
+        try {
+            // 1. Obtener resumen consolidado
+            EmployeeHoursSummaryDTO summary = calculateEmployeeHoursSummary(employeeId);
+
+            // 2. Obtener schedules
+            List<EmployeeScheduleDTO> schedules = getCompleteSchedulesByEmployeeId(employeeId);
+
+            // 3. NUEVA ESTRATEGIA: Clasificar todos los schedules juntos
+            List<EmployeeSchedule> allScheduleEntities = schedules.stream()
+                    .map(dto -> employeeScheduleRepository.findById(dto.getId()).orElse(null))
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            // Obtener clasificación completa de TODOS los schedules juntos
+            Map<String, BigDecimal> completeClassification = hourClassificationService.classifyScheduleHours(allScheduleEntities);
+
+            System.out.println("CLASIFICACIÓN COMPLETA DE TODOS LOS SCHEDULES:");
+            completeClassification.forEach((type, hours) -> {
+                if (hours.compareTo(BigDecimal.ZERO) > 0) {
+                    System.out.println("  " + type + ": " + hours + "h");
+                }
+            });
+
+            // 4. Identificar días que contribuyen a las horas especiales
+            List<Map<String, Object>> dailyDetails = new ArrayList<>();
+
+            // Solo buscar tipos especiales del resultado completo
+            Map<String, BigDecimal> specialHours = completeClassification.entrySet().stream()
+                    .filter(entry -> isSpecialHourType(entry.getKey()) && entry.getValue().compareTo(BigDecimal.ZERO) > 0)
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+            if (!specialHours.isEmpty()) {
+                // LÓGICA CORREGIDA: Encontrar días que tienen horas especiales REALES
+                for (EmployeeScheduleDTO schedule : schedules) {
+                    Map<String, Object> days = (Map<String, Object>) schedule.getDays();
+                    List<Map<String, Object>> dayItems = (List<Map<String, Object>>) days.get("items");
+
+                    for (Map<String, Object> day : dayItems) {
+                        String dateStr = (String) day.get("date");
+                        LocalDate date = LocalDate.parse(dateStr);
+
+                        // Verificar si este día tiene bloques de tiempo
+                        List<Map<String, Object>> timeBlocks = (List<Map<String, Object>>) day.get("timeBlocks");
+                        if (timeBlocks != null && !timeBlocks.isEmpty()) {
+
+                            // Calcular horas del día y verificar si hay horas especiales REALES
+                            double totalDayHours = 0.0;
+                            List<Map<String, Object>> blockDetails = new ArrayList<>();
+                            boolean hasDaySpecialHours = false;  // Flag para horas especiales reales
+                            String dayType = "REGULAR";
+
+                            for (Map<String, Object> block : timeBlocks) {
+                                String startTime = (String) block.get("startTime");
+                                String endTime = (String) block.get("endTime");
+                                double blockHours = calculateHours(startTime, endTime);
+                                totalDayHours += blockHours;
+
+                                // VERIFICAR si este bloque específico tiene horas especiales
+                                boolean isBlockSpecial = isTimeBlockSpecial(startTime, endTime, date, employeeId);
+
+                                if (isBlockSpecial) {
+                                    hasDaySpecialHours = true;
+                                    // Determinar el tipo específico del bloque especial
+                                    dayType = determineBlockType(startTime, endTime, date, employeeId);
+                                }
+
+                                Map<String, Object> blockDetail = new HashMap<>();
+                                blockDetail.put("startTime", startTime.substring(0, 5));
+                                blockDetail.put("endTime", endTime.substring(0, 5));
+                                blockDetail.put("hours", blockHours);
+                                blockDetails.add(blockDetail);
+                            }
+
+                            // FILTRO CRÍTICO: Solo agregar si el día REALMENTE tiene horas especiales
+                            if (hasDaySpecialHours && totalDayHours > 0) {
+                                Map<String, Object> dayDetail = new HashMap<>();
+                                dayDetail.put("date", dateStr);
+                                dayDetail.put("dayOfWeek", date.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.forLanguageTag("es")));
+                                dayDetail.put("shiftName", schedule.getShiftName());
+                                dayDetail.put("hourType", dayType);
+                                dayDetail.put("totalHours", totalDayHours);
+                                dayDetail.put("timeBlocks", blockDetails);
+
+                                // Información adicional
+                                if (holidayService.isHoliday(date)) {
+                                    dayDetail.put("isHoliday", true);
+                                    dayDetail.put("holidayName", holidayService.getHolidayName(date));
+                                }
+
+                                if (holidayExemptionService.hasExemption(employeeId, date)) {
+                                    dayDetail.put("hasExemption", true);
+                                    dayDetail.put("exemptionReason", holidayExemptionService.getExemptionReason(employeeId, date));
+                                }
+
+                                dailyDetails.add(dayDetail);
+                                System.out.println("✅ Día agregado al reporte: " + dateStr + " - Tipo: " + dayType);
+                            } else {
+                                System.out.println("🔇 Día FILTRADO (solo horas regulares): " + dateStr);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Respuesta completa
+            Map<String, Object> response = new HashMap<>();
+            response.put("employeeId", employeeId);
+            response.put("employeeName", employeeDataService.getEmployeeName(employeeId));
+            response.put("totalHours", summary.getTotalHours());
+            response.put("regularHours", summary.getRegularHours());
+            response.put("overtimeHours", summary.getOvertimeHours());
+            response.put("festivoHours", summary.getFestivoHours());
+            response.put("overtimeType", summary.getOvertimeType());
+            response.put("festivoType", summary.getFestivoType());
+            response.put("dailyDetails", dailyDetails);
+
+            return response;
+
+        } catch (Exception e) {
+            throw new RuntimeException("Error obteniendo breakdown diario", e);
+        }
+    }
+
+// AGREGAR ESTOS MÉTODOS AUXILIARES AL FINAL DE LA CLASE EmployeeScheduleService
+
+    /**
+     * Determina si un bloque de tiempo específico contiene horas especiales
+     */
+    private boolean isTimeBlockSpecial(String startTime, String endTime, LocalDate date, Long employeeId) {
+
+        // 1. Verificar si es festivo
+        if (holidayService.isHoliday(date)) {
+            return true;
+        }
+
+        // 2. Verificar si tiene exención
+        if (holidayExemptionService.hasExemption(employeeId, date)) {
+            return true;
+        }
+
+        // 3. Verificar si es horario nocturno (19:00 o posterior)
+        try {
+            int startHour = Integer.parseInt(startTime.split(":")[0]);
+            if (startHour >= 19) {
+                return true; // Horario nocturno = especial (segundo turno)
+            }
+        } catch (Exception e) {
+            // Si hay error parsing, asumir que no es especial
+        }
+
+        // 4. Verificar si es domingo
+        if (date.getDayOfWeek().getValue() == 7) {
+            return true;
+        }
+
+        // 5. Horarios diurnos regulares (06:00-18:59) NO son especiales
+        return false;
+    }
+
+    /**
+     * Determina el tipo específico del bloque especial
+     */
+    private String determineBlockType(String startTime, String endTime, LocalDate date, Long employeeId) {
+
+        // Verificar exenciones primero
+        if (holidayExemptionService.hasExemption(employeeId, date)) {
+            return "EXEMPT";
+        }
+
+        // Verificar si es festivo
+        if (holidayService.isHoliday(date)) {
+            return "FESTIVO_DIURNA";
+        }
+
+        // Verificar si es horario nocturno (19:00+)
+        try {
+            int startHour = Integer.parseInt(startTime.split(":")[0]);
+            if (startHour >= 19) {
+                return "EXTRA_NOCTURNA"; // Segundo turno nocturno
+            }
+        } catch (Exception e) {
+            // Error parsing
+        }
+
+        // Verificar si es domingo (para horarios diurnos en domingo)
+        if (date.getDayOfWeek().getValue() == 7) {
+            return "DOMINICAL_DIURNA";
+        }
+
+        return "REGULAR_DIURNA"; // Por defecto (no debería llegar aquí)
+    }
 }

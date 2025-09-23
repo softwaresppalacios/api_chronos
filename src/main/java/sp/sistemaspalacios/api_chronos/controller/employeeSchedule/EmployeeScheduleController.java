@@ -26,7 +26,6 @@ import sp.sistemaspalacios.api_chronos.service.common.TimeService;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.core.EmployeeScheduleService;
 
 import java.sql.Time;
-import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -56,29 +55,68 @@ public class EmployeeScheduleController {
 
     // =================== SCHEDULE MANAGEMENT ===================
 
+    // REEMPLAZAR el método assign-multiple en EmployeeScheduleController.java
     @PostMapping("/assign-multiple")
     public ResponseEntity<Map<String, Object>> assignMultiple(
             @Valid @RequestBody AssignmentRequest request
     ) {
         Map<String, Object> body = new HashMap<>();
 
-        // ===== DEBUG LOGGING =====
-        System.out.println("=== ASSIGN MULTIPLE REQUEST ===");
-        System.out.println("Request: " + request);
-        if (request != null && request.getAssignments() != null) {
+        try {
+            // ===== VALIDACIÓN INICIAL =====
+            if (request == null) {
+                body.put("success", false);
+                body.put("error", "BAD_REQUEST");
+                body.put("message", "El cuerpo de la solicitud es requerido");
+                return ResponseEntity.badRequest().body(body);
+            }
+
+            if (request.getAssignments() == null || request.getAssignments().isEmpty()) {
+                body.put("success", false);
+                body.put("error", "BAD_REQUEST");
+                body.put("message", "Debe proporcionar al menos una asignación");
+                return ResponseEntity.badRequest().body(body);
+            }
+
+            // ===== DEBUG LOGGING =====
+            System.out.println("=== ASSIGN MULTIPLE REQUEST ===");
+            System.out.println("Request: " + request);
             System.out.println("Assignments size: " + request.getAssignments().size());
+
             for (int i = 0; i < request.getAssignments().size(); i++) {
                 ScheduleDto.ScheduleAssignment a = request.getAssignments().get(i);
                 System.out.println("Assignment " + i + ": " + a);
-            }
-        }
-        System.out.println("=== END DEBUG ===");
 
-        try {
+                // Validación básica de cada assignment
+                if (a.getEmployeeId() == null || a.getEmployeeId() <= 0) {
+                    body.put("success", false);
+                    body.put("error", "VALIDATION_ERROR");
+                    body.put("message", "Employee ID inválido en asignación " + (i + 1));
+                    return ResponseEntity.badRequest().body(body);
+                }
+
+                if (a.getShiftId() == null || a.getShiftId() <= 0) {
+                    body.put("success", false);
+                    body.put("error", "VALIDATION_ERROR");
+                    body.put("message", "Shift ID inválido en asignación " + (i + 1));
+                    return ResponseEntity.badRequest().body(body);
+                }
+
+                if (a.getStartDate() == null) {
+                    body.put("success", false);
+                    body.put("error", "VALIDATION_ERROR");
+                    body.put("message", "Fecha de inicio requerida en asignación " + (i + 1));
+                    return ResponseEntity.badRequest().body(body);
+                }
+            }
+            System.out.println("=== END DEBUG ===");
+
+            // ===== PROCESAMIENTO PRINCIPAL =====
             AssignmentResult result = employeeScheduleService.processMultipleAssignments(request);
 
-            // Defensa: si el servicio retornó null, arma un resultado consistente
+            // ===== VALIDACIÓN DE RESULTADO =====
             if (result == null) {
+                System.err.println("WARNING: El servicio retornó null, creando resultado por defecto");
                 result = new AssignmentResult();
                 result.setSuccess(true);
                 result.setMessage("Asignación procesada.");
@@ -86,17 +124,24 @@ public class EmployeeScheduleController {
                 result.setHolidayWarnings(new ArrayList<>());
                 result.setRequiresConfirmation(false);
             } else {
-                // Normaliza listas a vacías para evitar nulls en JSON
-                if (result.getUpdatedEmployees() == null) result.setUpdatedEmployees(new ArrayList<>());
-                if (result.getHolidayWarnings() == null) result.setHolidayWarnings(new ArrayList<>());
+                // Normalizar listas para evitar nulls en JSON
+                if (result.getUpdatedEmployees() == null) {
+                    result.setUpdatedEmployees(new ArrayList<>());
+                }
+                if (result.getHolidayWarnings() == null) {
+                    result.setHolidayWarnings(new ArrayList<>());
+                }
             }
 
-            // Envoltorio estándar para éxito
+            // ===== RESPUESTA EXITOSA =====
             body.put("success", result.isSuccess());
             if (result.getMessage() != null && !result.getMessage().isBlank()) {
                 body.put("message", result.getMessage());
             }
             body.put("result", result);
+
+            System.out.println("Asignación completada exitosamente para " +
+                    request.getAssignments().size() + " asignaciones");
 
             return ResponseEntity.ok(body);
 
@@ -110,11 +155,13 @@ public class EmployeeScheduleController {
 
         } catch (ScheduleDto.ValidationException ve) {
             System.err.println("ValidationException: " + ve.getMessage());
-            System.err.println("Validation errors: " + ve.getValidationErrors());
+            if (ve.getValidationErrors() != null) {
+                System.err.println("Validation errors: " + ve.getValidationErrors());
+            }
             body.put("success", false);
             body.put("error", "VALIDATION_ERROR");
             body.put("message", ve.getMessage() != null ? ve.getMessage() : "La solicitud no pasó validación");
-            body.put("validationErrors", ve.getValidationErrors());
+            body.put("validationErrors", ve.getValidationErrors() != null ? ve.getValidationErrors() : new ArrayList<>());
             return ResponseEntity.badRequest().body(body);
 
         } catch (IllegalArgumentException iae) {
@@ -131,17 +178,37 @@ public class EmployeeScheduleController {
             dive.printStackTrace();
             body.put("success", false);
             body.put("error", "SCHEDULE_CONFLICT");
-            body.put("message", "No se pudo asignar los turnos en las mismas fechas");
+            body.put("message", "No se pudo asignar los turnos - posible conflicto en base de datos");
             body.put("rootCause", "DataIntegrityViolationException");
             return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+
+        } catch (RuntimeException re) {
+            System.err.println("RuntimeException: " + re.getMessage());
+            re.printStackTrace();
+
+            // Extraer causa raíz para mejor diagnóstico
+            Throwable rootCause = re;
+            while (rootCause.getCause() != null && rootCause.getCause() != rootCause) {
+                rootCause = rootCause.getCause();
+            }
+
+            body.put("success", false);
+            body.put("error", "RUNTIME_ERROR");
+            body.put("message", "Error en tiempo de ejecución: " + re.getMessage());
+            body.put("rootCause", rootCause.getClass().getSimpleName());
+            body.put("rootMessage", rootCause.getMessage());
+
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
 
         } catch (Exception ex) {
             System.err.println("Unexpected Exception: " + ex.getClass().getName() + " - " + ex.getMessage());
             ex.printStackTrace();
+
             body.put("success", false);
             body.put("error", "INTERNAL_ERROR");
             body.put("message", "Ocurrió un error inesperado: " + ex.getMessage());
             body.put("rootCause", ex.getClass().getSimpleName());
+
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
         }
     }
@@ -232,19 +299,21 @@ public class EmployeeScheduleController {
 
     @GetMapping("/by-dependency-id")
     public ResponseEntity<List<Map<String, Object>>> getSchedulesByDependencyId(
-            @RequestParam Long dependencyId,
+            @RequestParam(required = false) Long dependencyId, // ← Ahora es opcional
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
             @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime,
             @RequestParam(required = false) Long shiftId) {
 
-        if (dependencyId == null || dependencyId <= 0) {
+        // Validar que al menos hay un parámetro de búsqueda
+        if (dependencyId == null && startDate == null && endDate == null && startTime == null && shiftId == null) {
+            System.out.println("ERROR: No se proporcionaron parámetros de búsqueda");
             return ResponseEntity.badRequest().build();
         }
 
         try {
             System.out.println("Parámetros recibidos:");
-            System.out.println("- dependencyId: " + dependencyId);
+            System.out.println("- dependencyId: " + (dependencyId != null ? dependencyId : "TODAS"));
             System.out.println("- startDate: " + startDate);
             System.out.println("- endDate: " + endDate);
             System.out.println("- startTime: " + startTime);
@@ -259,12 +328,9 @@ public class EmployeeScheduleController {
         } catch (Exception e) {
             System.err.println("Error en getSchedulesByDependencyId: " + e.getMessage());
             e.printStackTrace();
-
-            // Retornar lista vacía en lugar de error 500
             return ResponseEntity.ok(Collections.emptyList());
         }
     }
-
     @GetMapping("/by-employee-id/{employeeId}")
     public ResponseEntity<List<EmployeeScheduleDTO>> getSchedulesByEmployeeIdString(@PathVariable String employeeId) {
         try {
@@ -713,13 +779,9 @@ public class EmployeeScheduleController {
         schedule.setShift(shift);
 
         SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
-        try {
-            schedule.setStartDate(dateFormat.parse(scheduleRequest.get("startDate").toString()));
-            if (scheduleRequest.get("endDate") != null) {
-                schedule.setEndDate(dateFormat.parse(scheduleRequest.get("endDate").toString()));
-            }
-        } catch (ParseException e) {
-            throw new IllegalArgumentException("Invalid date format. Use yyyy-MM-dd");
+        schedule.setStartDate(LocalDate.parse(scheduleRequest.get("startDate").toString())); // usa ISO yyyy-MM-dd
+        if (scheduleRequest.get("endDate") != null && !scheduleRequest.get("endDate").toString().isBlank()) {
+            schedule.setEndDate(LocalDate.parse(scheduleRequest.get("endDate").toString()));
         }
 
         return schedule;

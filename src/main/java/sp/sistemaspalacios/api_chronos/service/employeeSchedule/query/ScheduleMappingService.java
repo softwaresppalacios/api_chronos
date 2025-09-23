@@ -13,6 +13,8 @@ import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.core.EmployeeDataService;
 
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -62,6 +64,27 @@ public class ScheduleMappingService {
         System.out.println("DTO convertido exitosamente");
         return dto;
     }
+
+
+    private static final DateTimeFormatter DTF = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+    // cambia la firma:
+// CAMBIAR ESTE MÉTODO:
+    private String formatDate(LocalDate date) {
+        return (date == null) ? null : DTF.format(date);
+    }
+
+    // Y TAMBIÉN ESTE SI EXISTE:
+    private String formatDate(Date date) {
+        if (date == null) return null;
+        try {
+            return dateFormat.format(date);
+        } catch (Exception e) {
+            System.err.println("Error formateando fecha: " + date + " (" + date.getClass().getName() + ")");
+            return null;
+        }
+    }
+
 
     // MÉTODO para construir la estructura de días con timeBlocks
     private Map<String, Object> buildDaysStructure(EmployeeSchedule schedule) {
@@ -162,9 +185,7 @@ public class ScheduleMappingService {
         }
     }
 
-    private String formatDate(Date date) {
-        return date != null ? dateFormat.format(date) : null;
-    }
+
 
     // Tu método convertToDTO existente (básico) puede quedarse igual
     public EmployeeScheduleDTO convertToDTO(EmployeeSchedule schedule) {
