@@ -727,6 +727,7 @@ public class ShiftBusinessService {
         return response;
     }
 
+
     private Long tryParseLong(String s) {
         try { return Long.parseLong(s); } catch (Exception e) { return null; }
     }
