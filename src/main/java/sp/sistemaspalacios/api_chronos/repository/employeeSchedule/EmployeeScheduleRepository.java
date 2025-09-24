@@ -24,10 +24,6 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
 
 
 
-
-
-
-
     // Agregar estos métodos al EmployeeScheduleRepository
 
     @Query("SELECT es FROM EmployeeSchedule es WHERE es.employeeId = :employeeId " +
@@ -59,10 +55,10 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
     @Query("SELECT es FROM EmployeeSchedule es WHERE es.shift.id = :shiftId")
     List<EmployeeSchedule> findByShiftId(@Param("shiftId") Long shiftId);
 
-    @Query("SELECT es FROM EmployeeSchedule es WHERE es.startDate >= :startDate AND es.endDate <= :endDate")
-    List<EmployeeSchedule> findByDateRange(@Param("startDate") Date startDate, @Param("endDate") Date endDate);
-
-
+    @Query("SELECT es FROM EmployeeSchedule es " +
+            "WHERE es.startDate >= :startDate AND (es.endDate IS NULL OR es.endDate <= :endDate)")
+    List<EmployeeSchedule> findByDateRange(@Param("startDate") java.time.LocalDate startDate,
+                                           @Param("endDate")   java.time.LocalDate endDate);
 
 
     @Query("SELECT d FROM EmployeeScheduleDay d " +
@@ -85,11 +81,8 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
   WHERE es.startDate <= :endDate
     AND (es.endDate IS NULL OR es.endDate >= :startDate)
 """)
-    List<EmployeeSchedule> findOverlapping(@Param("dependencyId") Long dependencyId, // puedes dejarlo o quitarlo
-                                           @Param("startDate") java.time.LocalDate startDate,
+    List<EmployeeSchedule> findOverlapping(@Param("startDate") java.time.LocalDate startDate,
                                            @Param("endDate")   java.time.LocalDate endDate);
-
-
 
 
 

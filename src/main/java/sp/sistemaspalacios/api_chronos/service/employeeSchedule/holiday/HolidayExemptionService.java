@@ -26,33 +26,13 @@ public class HolidayExemptionService {
     public HolidayExemptionDTO saveExemption(Long employeeId, LocalDate holidayDate,
                                              String holidayName, String exemptionReason,
                                              Long scheduleAssignmentGroupId) {
-
-        System.out.println("=== HOLIDAY EXEMPTION SERVICE DEBUG ===");
-        System.out.println("employeeId: " + employeeId);
-        System.out.println("holidayDate: " + holidayDate);
-        System.out.println("holidayName: " + holidayName);
-        System.out.println("exemptionReason: '" + exemptionReason + "'");
-        System.out.println("exemptionReason == null: " + (exemptionReason == null));
-        System.out.println("exemptionReason.isEmpty(): " + (exemptionReason != null ? exemptionReason.isEmpty() : "N/A"));
-        System.out.println("scheduleAssignmentGroupId: " + scheduleAssignmentGroupId);
-
         HolidayExemption exemption = new HolidayExemption();
         exemption.setEmployeeId(employeeId);
         exemption.setHolidayDate(holidayDate);
         exemption.setHolidayName(holidayName);
         exemption.setExemptionReason(exemptionReason);
         exemption.setScheduleAssignmentGroupId(scheduleAssignmentGroupId);
-
-        System.out.println("=== ANTES DE GUARDAR ===");
-        System.out.println("exemption.getExemptionReason(): '" + exemption.getExemptionReason() + "'");
-
         HolidayExemption saved = holidayExemptionRepository.save(exemption);
-
-        System.out.println("=== DESPUÉS DE GUARDAR ===");
-        System.out.println("saved.getId(): " + saved.getId());
-        System.out.println("saved.getExemptionReason(): '" + saved.getExemptionReason() + "'");
-        System.out.println("=== FIN DEBUG ===");
-
         return convertToDTO(saved);
     }
 

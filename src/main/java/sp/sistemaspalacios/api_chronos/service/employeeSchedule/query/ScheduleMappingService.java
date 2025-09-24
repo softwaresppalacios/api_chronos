@@ -31,50 +31,35 @@ public class ScheduleMappingService {
 
     public EmployeeScheduleDTO convertToCompleteDTO(EmployeeSchedule schedule) {
         if (schedule == null) return null;
-
-        System.out.println("Convirtiendo schedule ID: " + schedule.getId() + " para empleado: " + schedule.getEmployeeId());
-
-        // Obtener datos del empleado desde la API externa
         EmployeeResponse response = employeeDataService.getEmployeeData(schedule.getEmployeeId());
         EmployeeResponse.Employee employee = response != null ? response.getEmployee() : null;
 
         EmployeeScheduleDTO dto = new EmployeeScheduleDTO();
         dto.setId(schedule.getId());
         dto.setNumberId(schedule.getEmployeeId());
-
-        // Datos del empleado (con valores por defecto si no se encuentran)
         dto.setFirstName(getEmployeeField(employee, EmployeeResponse.Employee::getFirstName, "Desconocido"));
         dto.setSecondName(getEmployeeField(employee, EmployeeResponse.Employee::getSecondName, ""));
         dto.setSurName(getEmployeeField(employee, EmployeeResponse.Employee::getSurName, "Desconocido"));
         dto.setSecondSurname(getEmployeeField(employee, EmployeeResponse.Employee::getSecondSurname, ""));
         dto.setDependency(getEmployeeDependency(employee));
         dto.setPosition(getEmployeePosition(employee));
-
-        // Fechas
         dto.setStartDate(formatDate(schedule.getStartDate()));
         dto.setEndDate(formatDate(schedule.getEndDate()));
         dto.setDaysParentId(schedule.getDaysParentId());
-
-        // Shift info
         dto.setShift(buildShiftMap(schedule.getShift()));
 
-        // Days structure COMPLETA con timeBlocks
         dto.setDays(buildDaysStructure(schedule));
-
-        System.out.println("DTO convertido exitosamente");
         return dto;
     }
 
 
     private static final DateTimeFormatter DTF = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
-    // cambia la firma:
-// CAMBIAR ESTE MÉTODO:
+
     private String formatDate(LocalDate date) {
         return (date == null) ? null : DTF.format(date);
     }
 
-    // Y TAMBIÉN ESTE SI EXISTE:
     private String formatDate(Date date) {
         if (date == null) return null;
         try {
@@ -149,9 +134,6 @@ public class ScheduleMappingService {
         return shiftDTO;
     }
 
-
-
-
     // MÉTODOS auxiliares para datos del empleado
     private <T> T getEmployeeField(EmployeeResponse.Employee employee,
                                    Function<EmployeeResponse.Employee, T> getter,
@@ -184,9 +166,6 @@ public class ScheduleMappingService {
             return "Sin posición";
         }
     }
-
-
-
     // Tu método convertToDTO existente (básico) puede quedarse igual
     public EmployeeScheduleDTO convertToDTO(EmployeeSchedule schedule) {
         if (schedule == null) return null;

@@ -13,6 +13,8 @@ import sp.sistemaspalacios.api_chronos.service.employeeSchedule.core.EmployeeDat
 
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -24,6 +26,26 @@ public class ScheduleQueryService {
     private final ShiftsRepository shiftsRepository;
     private final ScheduleMappingService scheduleMappingService;
     private final EmployeeDataService employeeDataService;
+
+    private static final DateTimeFormatter ISO_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter ISO_TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
+
+    // Acepta LocalDate o java.util.Date
+    private String fmtDate(Object date) {
+        if (date == null) return null;
+        if (date instanceof LocalDate ld) return ld.format(ISO_DATE);
+        if (date instanceof Date d) return new SimpleDateFormat("yyyy-MM-dd").format(d);
+        // fallback: no reventar si llega otro tipo
+        return String.valueOf(date);
+    }
+
+    // Acepta LocalTime o java.sql.Time
+    private String fmtTime(Object time) {
+        if (time == null) return null;
+        if (time instanceof LocalTime lt) return lt.format(ISO_TIME);
+        if (time instanceof java.sql.Time st) return st.toLocalTime().format(ISO_TIME);
+        return String.valueOf(time);
+    }
 
     public List<EmployeeScheduleDTO> getSchedulesByEmployeeIds(List<Long> employeeIds) {
         if (employeeIds == null || employeeIds.isEmpty()) {
@@ -37,17 +59,12 @@ public class ScheduleQueryService {
     }
 
     public List<EmployeeScheduleDTO> getCompleteSchedulesByEmployeeId(Long employeeId) {
-        System.out.println("Buscando horarios para empleado: " + employeeId);
-
         if (employeeId == null) {
-            System.out.println("Employee ID es null");
             return List.of();
         }
 
         try {
             List<EmployeeSchedule> schedules = employeeScheduleRepository.findByEmployeeId(employeeId);
-            System.out.println("Encontrados " + schedules.size() + " horarios en BD");
-
             if (schedules.isEmpty()) {
                 return Collections.emptyList();
             }
@@ -78,8 +95,6 @@ public class ScheduleQueryService {
                             schedule.getDays().addAll(days);
                         }
                     }
-
-                    System.out.println("TimeBlocks cargados exitosamente");
                 } catch (Exception e) {
                     System.err.println("Error cargando timeBlocks: " + e.getMessage());
                 }
@@ -103,38 +118,25 @@ public class ScheduleQueryService {
         if (dependencyId == null) return Collections.emptyList();
 
         try {
-            System.out.println("Filtrando schedules por shifts de dependencyId: " + dependencyId);
-
             List<EmployeeSchedule> schedules;
 
             if (shiftId != null) {
-                // Si viene un shiftId específico, usar solo ese
                 schedules = employeeScheduleRepository.findByShiftId(shiftId);
-                System.out.println("Filtrado por shiftId específico: " + shiftId);
+
             } else {
                 // Obtener todos los shifts que pertenecen a esta dependencia
                 List<Shifts> dependencyShifts = shiftsRepository.findByDependencyId(dependencyId);
-                System.out.println("Shifts encontrados para dependencyId " + dependencyId + ": " + dependencyShifts.size());
-
                 if (dependencyShifts.isEmpty()) {
-                    System.out.println("No hay shifts para dependencyId: " + dependencyId);
                     return Collections.emptyList();
                 }
-
                 List<Long> shiftIds = dependencyShifts.stream()
                         .map(Shifts::getId)
                         .collect(Collectors.toList());
-
-                System.out.println("Shift IDs a buscar: " + shiftIds);
                 schedules = employeeScheduleRepository.findByShiftIdIn(shiftIds);
             }
 
-            System.out.println("Schedules encontrados: " + schedules.size());
-
-            // Aplicar filtros adicionales si vienen
             if (startDate != null || endDate != null || startTime != null) {
                 schedules = applyAdditionalFilters(schedules, startDate, endDate, startTime);
-                System.out.println("Schedules después de filtros adicionales: " + schedules.size());
             }
 
             return groupSchedulesByShift(schedules);
@@ -163,10 +165,9 @@ public class ScheduleQueryService {
                         if (endDate != null && scheduleStart.isAfter(endDate)) return false;
                     }
 
-                    // Filtro por hora de inicio (implementar si es necesario)
+                    // Filtro por hora de inicio (si lo necesitas, aquí)
                     if (startTime != null) {
-                        // Aquí puedes agregar lógica para filtrar por startTime
-                        // Por ejemplo, verificar si algún timeBlock del schedule comienza a esta hora
+                        // Ejemplo: podrías revisar si algún timeBlock comienza a cierta hora
                     }
 
                     return true;
@@ -234,8 +235,6 @@ public class ScheduleQueryService {
 
             result.add(group);
         }
-
-        System.out.println("Grupos finales generados: " + result.size());
         return result;
     }
 
@@ -244,7 +243,7 @@ public class ScheduleQueryService {
         employeeData.put("id", schedule.getEmployeeId());
         employeeData.put("numberId", schedule.getEmployeeId());
 
-        // Obtener datos del empleado
+        // Datos del empleado
         try {
             EmployeeResponse response = employeeDataService.getEmployeeData(schedule.getEmployeeId());
             if (response != null && response.getEmployee() != null) {
@@ -269,19 +268,18 @@ public class ScheduleQueryService {
             employeeData.put("shift", shiftInfo);
         }
 
-        // Fechas
-        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
-        employeeData.put("startDate", schedule.getStartDate() != null ? dateFormat.format(schedule.getStartDate()) : null);
-        employeeData.put("endDate", schedule.getEndDate() != null ? dateFormat.format(schedule.getEndDate()) : null);
+        // Fechas (usar helper que soporta LocalDate y Date)
+        employeeData.put("startDate", fmtDate(schedule.getStartDate()));
+        employeeData.put("endDate", fmtDate(schedule.getEndDate()));
 
-        // ✅ CARGAR DÍAS CON TIMEBLOCKS REALES
+        // ✅ Días con timeblocks reales
         Map<String, Object> daysStructure = buildDaysStructureForEmployee(schedule);
         employeeData.put("days", daysStructure);
 
         return employeeData;
     }
 
-    // ✅ NUEVO MÉTODO para construir días con timeBlocks
+    // Construir días con timeBlocks
     private Map<String, Object> buildDaysStructureForEmployee(EmployeeSchedule schedule) {
         Map<String, Object> daysStructure = new HashMap<>();
         daysStructure.put("id", schedule.getDaysParentId());
@@ -298,10 +296,8 @@ public class ScheduleQueryService {
                         .collect(Collectors.toList());
 
                 daysStructure.put("items", dayItems);
-                System.out.println("Días cargados para empleado " + schedule.getEmployeeId() + ": " + dayItems.size());
             } else {
                 daysStructure.put("items", new ArrayList<>());
-                System.out.println("No se encontraron días para empleado " + schedule.getEmployeeId());
             }
         } catch (Exception e) {
             System.err.println("Error cargando días para empleado " + schedule.getEmployeeId() + ": " + e.getMessage());
@@ -311,21 +307,20 @@ public class ScheduleQueryService {
         return daysStructure;
     }
 
-    // ✅ MÉTODO para convertir día a Map
+    // Día → Map (fecha usando fmtDate)
     private Map<String, Object> convertDayToMap(EmployeeScheduleDay day) {
         Map<String, Object> dayMap = new HashMap<>();
         dayMap.put("id", day.getId());
-        dayMap.put("date", new SimpleDateFormat("yyyy-MM-dd").format(day.getDate()));
+        dayMap.put("date", fmtDate(day.getDate()));
         dayMap.put("dayOfWeek", day.getDayOfWeek());
 
-        // TimeBlocks
         if (day.getTimeBlocks() != null && !day.getTimeBlocks().isEmpty()) {
             List<Map<String, Object>> timeBlocks = day.getTimeBlocks().stream()
                     .map(block -> {
                         Map<String, Object> blockMap = new HashMap<>();
                         blockMap.put("id", block.getId());
-                        blockMap.put("startTime", block.getStartTime().toString());
-                        blockMap.put("endTime", block.getEndTime().toString());
+                        blockMap.put("startTime", fmtTime(block.getStartTime()));
+                        blockMap.put("endTime", fmtTime(block.getEndTime()));
                         return blockMap;
                     })
                     .collect(Collectors.toList());
@@ -336,6 +331,7 @@ public class ScheduleQueryService {
 
         return dayMap;
     }
+
     private String extractDependencyName(Object dependency) {
         if (dependency == null) return null;
 
@@ -359,18 +355,23 @@ public class ScheduleQueryService {
                 .collect(Collectors.toList());
     }
 
+    // import java.time.LocalDate;
+
     public List<EmployeeScheduleDTO> getSchedulesByDateRange(Date startDate, Date endDate) {
         if (startDate == null || endDate == null) return List.of();
 
-        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByDateRange(startDate, endDate);
+        LocalDate s = (startDate instanceof java.sql.Date)
+                ? ((java.sql.Date) startDate).toLocalDate()
+                : startDate.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+
+        LocalDate e = (endDate instanceof java.sql.Date)
+                ? ((java.sql.Date) endDate).toLocalDate()
+                : endDate.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+
+        List<EmployeeSchedule> schedules = employeeScheduleRepository.findByDateRange(s, e);
         return schedules.stream()
                 .map(scheduleMappingService::convertToDTO)
                 .collect(Collectors.toList());
     }
 
-    private LocalDate convertToLocalDate(Date date) {
-        if (date == null) return null;
-        if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
-        return date.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
-    }
 }

@@ -299,62 +299,6 @@ public class ScheduleAssignmentGroupService {
         return detail;
     }
 
-    // ===== MÉTODOS PRIVADOS DE APOYO =====
-
-    private ScheduleAssignmentGroup findOrCreateGroupSimple(Long employeeId, List<Long> scheduleIds, Date startDate, Date endDate) {
-        // Buscar grupo existente que se solape con el período
-        Optional<ScheduleAssignmentGroup> existing = groupRepository.findByEmployeeId(employeeId).stream()
-                .filter(group -> hasDateOverlap(startDate, endDate, group.getPeriodStart(), group.getPeriodEnd()))
-                .findFirst();
-
-        if (existing.isPresent()) {
-            return updateExistingGroupSimple(existing.get(), scheduleIds, startDate, endDate);
-        } else {
-            return createNewGroupSimple(employeeId, scheduleIds, startDate, endDate);
-        }
-    }
-
-    private boolean hasDateOverlap(Date start1, Date end1, Date start2, Date end2) {
-        LocalDate s1 = convertToLocalDate(start1);
-        LocalDate e1 = convertToLocalDate(end1);
-        LocalDate s2 = convertToLocalDate(start2);
-        LocalDate e2 = convertToLocalDate(end2);
-
-        return !s1.isAfter(e2) && !s2.isAfter(e1);
-    }
-
-    private ScheduleAssignmentGroup updateExistingGroupSimple(ScheduleAssignmentGroup group, List<Long> scheduleIds, Date startDate, Date endDate) {
-        // Agregar nuevos schedule IDs
-        scheduleIds.forEach(id -> {
-            if (!group.getEmployeeScheduleIds().contains(id)) {
-                group.getEmployeeScheduleIds().add(id);
-            }
-        });
-
-        // Expandir rango de fechas si es necesario
-        LocalDate groupStart = convertToLocalDate(group.getPeriodStart());
-        LocalDate groupEnd = convertToLocalDate(group.getPeriodEnd());
-        LocalDate newStart = convertToLocalDate(startDate);
-        LocalDate newEnd = convertToLocalDate(endDate);
-
-        if (newStart.isBefore(groupStart)) {
-            group.setPeriodStart(startDate);
-        }
-        if (newEnd.isAfter(groupEnd)) {
-            group.setPeriodEnd(endDate);
-        }
-
-        return group;
-    }
-
-    private ScheduleAssignmentGroup createNewGroupSimple(Long employeeId, List<Long> scheduleIds, Date startDate, Date endDate) {
-        ScheduleAssignmentGroup group = new ScheduleAssignmentGroup();
-        group.setEmployeeId(employeeId);
-        group.setPeriodStart(startDate);
-        group.setPeriodEnd(endDate);
-        group.setEmployeeScheduleIds(new ArrayList<>(scheduleIds));
-        return group;
-    }
 
     private void updateGroupTotalsSimple(ScheduleAssignmentGroup group, Map<String, BigDecimal> hoursByType) {
         BigDecimal regularHours = sumHoursByPrefix(hoursByType, "REGULAR_");
@@ -413,8 +357,6 @@ public class ScheduleAssignmentGroupService {
 
         return breakdown;
     }
-
-    // ===== CONVERSIÓN A DTO =====
 
     private ScheduleAssignmentGroupDTO convertGroupToDTO(ScheduleAssignmentGroup group) {
         List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
@@ -523,8 +465,6 @@ public class ScheduleAssignmentGroupService {
     }
 
 
-
-
     @Transactional
     public ScheduleAssignmentGroupDTO processScheduleAssignment(Long employeeId, List<Long> scheduleIds) {
         if (employeeId == null) throw new IllegalArgumentException("Employee ID no puede ser nulo");
@@ -533,17 +473,10 @@ public class ScheduleAssignmentGroupService {
         }
 
         try {
-            System.out.println("=== PROCESANDO ASSIGNMENT GROUP PARA EMPLEADO " + employeeId + " ===");
-            System.out.println("Schedule IDs: " + scheduleIds);
-
             List<EmployeeSchedule> schedules = scheduleRepository.findAllById(scheduleIds);
             if (schedules.isEmpty()) {
                 throw new IllegalArgumentException("No se encontraron schedules con los IDs proporcionados");
             }
-
-            System.out.println("Schedules encontrados: " + schedules.size());
-
-            // ✅ MEJORAR: Cálculo seguro de período
             LocalDate startL = null;
             LocalDate endL = null;
 
@@ -566,32 +499,16 @@ public class ScheduleAssignmentGroupService {
                 System.err.println("Error: No se pudieron determinar las fechas del período");
                 throw new IllegalArgumentException("No se pudieron determinar las fechas del período");
             }
-
-            System.out.println("Período calculado: " + startL + " al " + endL);
-
-            // ✅ CONVERSIÓN SEGURA: LocalDate -> java.sql.Date
             java.sql.Date startDate = java.sql.Date.valueOf(startL);
             java.sql.Date endDate = java.sql.Date.valueOf(endL);
-
-            System.out.println("Fechas convertidas: " + startDate + " al " + endDate);
-
-            // Encontrar o crear grupo
             ScheduleAssignmentGroup group = findOrCreateGroupSafe(employeeId, scheduleIds, startDate, endDate);
             if (group == null) {
                 throw new RuntimeException("No se pudo crear o encontrar el grupo");
             }
-
-            System.out.println("Grupo obtenido/creado ID: " + group.getId());
-
-            // Calcular horas de forma segura
             Map<String, BigDecimal> hoursByType = new HashMap<>();
             try {
                 List<EmployeeSchedule> allSchedules = scheduleRepository.findAllById(group.getEmployeeScheduleIds());
-                System.out.println("Calculando horas para " + allSchedules.size() + " schedules");
-
                 hoursByType = hourClassificationService.classifyScheduleHours(allSchedules);
-                System.out.println("Horas calculadas: " + hoursByType.size() + " tipos");
-
             } catch (Exception e) {
                 System.err.println("Error calculando horas: " + e.getMessage());
                 e.printStackTrace();
@@ -604,8 +521,6 @@ public class ScheduleAssignmentGroupService {
             syncStatusWithDates(group);
 
             group = groupRepository.save(group);
-            System.out.println("Grupo guardado exitosamente");
-
             return convertToDTO(group, schedules, hoursByType);
 
         } catch (Exception e) {
@@ -625,14 +540,10 @@ public class ScheduleAssignmentGroupService {
             for (ScheduleAssignmentGroup existing : existingGroups) {
                 if (existing.getPeriodStart() != null && existing.getPeriodEnd() != null) {
                     if (hasDateOverlapSafe(startDate, endDate, existing.getPeriodStart(), existing.getPeriodEnd())) {
-                        System.out.println("Actualizando grupo existente ID: " + existing.getId());
                         return updateExistingGroupSafe(existing, scheduleIds, startDate, endDate);
                     }
                 }
             }
-
-            // Crear nuevo grupo
-            System.out.println("Creando nuevo grupo");
             return createNewGroupSafe(employeeId, scheduleIds, startDate, endDate);
 
         } catch (Exception e) {
@@ -760,9 +671,6 @@ public class ScheduleAssignmentGroupService {
 
             group.setOvertimeType(findPredominantType(hoursByType, Arrays.asList("EXTRA_", "DOMINICAL_")));
             group.setFestivoType(findPredominantType(hoursByType, Arrays.asList("FESTIVO_")));
-
-            System.out.println("Totales actualizados - Total: " + totalHours + "h, Regular: " + regularHours + "h");
-
         } catch (Exception e) {
             System.err.println("Error actualizando totales: " + e.getMessage());
             e.printStackTrace();

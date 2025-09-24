@@ -33,16 +33,8 @@ public class ScheduleDayGeneratorService {
     }
 
     public void generateScheduleDaysWithHolidayDecisions(EmployeeSchedule schedule, List<ScheduleDto.HolidayDecision> holidayDecisions) {
-        System.out.println("=== GENERANDO DÍAS ===");
-        System.out.println("Schedule start date type: " + (schedule.getStartDate() != null ? schedule.getStartDate().getClass().getName() : "null"));
-        System.out.println("Schedule start date value: " + schedule.getStartDate());
-        System.out.println("Schedule end date type: " + (schedule.getEndDate() != null ? schedule.getEndDate().getClass().getName() : "null"));
-        System.out.println("Schedule end date value: " + schedule.getEndDate());
-
         if (schedule.getDays() == null) schedule.setDays(new ArrayList<>());
         else schedule.getDays().clear();
-
-        // ✅ start/end ya son LocalDate en EmployeeSchedule
         LocalDate startDate = schedule.getStartDate();
         LocalDate endDate   = (schedule.getEndDate() != null) ? schedule.getEndDate() : startDate;
 

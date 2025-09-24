@@ -69,9 +69,6 @@ public class EmployeeScheduleService {
         this.hourClassificationService = hourClassificationService;
     }
 
-    // =================== ASIGNACIONES (DELEGADAS) ===================
-
-
     public AssignmentResult processMultipleAssignments(AssignmentRequest request) {
         return scheduleAssignmentService.processMultipleAssignments(request);
     }
@@ -117,14 +114,6 @@ public class EmployeeScheduleService {
             Long shiftId
     ) {
         try {
-            System.out.println("Buscando schedules con parámetros:");
-            System.out.println("- dependencyId: " + (dependencyId != null ? dependencyId : "TODAS"));
-            System.out.println("- startDate: " + startDate);
-            System.out.println("- endDate: " + endDate);
-            System.out.println("- startTime: " + startTime);
-            System.out.println("- shiftId: " + shiftId);
-
-            // Delegar al ScheduleQueryService
             return scheduleQueryService.getSchedulesByDependencyId(dependencyId, startDate, endDate, startTime, shiftId);
 
         } catch (Exception e) {
@@ -204,61 +193,6 @@ public class EmployeeScheduleService {
     }
 
 
-
-
-
-    private String determineDayTypeFromCompleteResult(LocalDate date, Map<String, BigDecimal> specialHours, Long employeeId) {
-
-        // Verificar exenciones
-        if (holidayExemptionService.hasExemption(employeeId, date)) {
-            return "EXEMPT";
-        }
-
-        int dayOfWeek = date.getDayOfWeek().getValue();
-        boolean isHoliday = holidayService.isHoliday(date);
-        boolean isSunday = (dayOfWeek == 7);
-
-        // DEVOLVER EL CÓDIGO REAL DE LA BASE DE DATOS, no tipos simplificados
-
-        // Verificar festivos + dominicales
-        if (isHoliday && isSunday) {
-            // Buscar FESTIVO_DOMINICAL_DIURNA o FESTIVO_DOMINICAL_NOCTURNA
-            return specialHours.keySet().stream()
-                    .filter(type -> type.startsWith("FESTIVO_DOMINICAL_"))
-                    .findFirst()
-                    .orElse("REGULAR");
-        }
-
-        // Verificar solo festivos
-        if (isHoliday) {
-            // Buscar FESTIVO_DIURNA, FESTIVO_NOCTURNA, EXTRA_FESTIVO_DIURNA, etc.
-            return specialHours.keySet().stream()
-                    .filter(type -> type.contains("FESTIVO") && !type.contains("DOMINICAL"))
-                    .findFirst()
-                    .orElse("REGULAR");
-        }
-
-        // Verificar solo domingos
-        if (isSunday) {
-            // Buscar DOMINICAL_DIURNA, DOMINICAL_NOCTURNA, EXTRA_DOMINICAL_DIURNA, etc.
-            return specialHours.keySet().stream()
-                    .filter(type -> type.contains("DOMINICAL") && !type.contains("FESTIVO"))
-                    .findFirst()
-                    .orElse("REGULAR");
-        }
-
-        // Verificar horas extras regulares
-        if (specialHours.keySet().stream().anyMatch(type -> type.startsWith("EXTRA_") && !type.contains("FESTIVO") && !type.contains("DOMINICAL"))) {
-            // Buscar EXTRA_DIURNA, EXTRA_NOCTURNA
-            return specialHours.keySet().stream()
-                    .filter(type -> type.startsWith("EXTRA_") && !type.contains("FESTIVO") && !type.contains("DOMINICAL"))
-                    .findFirst()
-                    .orElse("REGULAR");
-        }
-
-        return "REGULAR";
-    }
-
     private boolean isSpecialHourType(String type) {
         return type.startsWith("EXTRA_") ||
                 type.startsWith("FESTIVO_") ||
@@ -283,90 +217,34 @@ public class EmployeeScheduleService {
         }
     }
 
-
-
     public void testDiagnostic(Long employeeId) {
-        System.out.println("=== DIAGNÓSTICO SIMPLE ===");
-
         List<EmployeeScheduleDTO> schedules = getCompleteSchedulesByEmployeeId(employeeId);
-        System.out.println("Total schedules encontrados: " + schedules.size());
 
         for (EmployeeScheduleDTO schedule : schedules) {
-            System.out.println("\n*** SCHEDULE ID: " + schedule.getId() + " ***");
-
             EmployeeSchedule scheduleEntity = employeeScheduleRepository.findById(schedule.getId()).orElse(null);
             if (scheduleEntity == null) {
-                System.out.println("ERROR: No se pudo cargar schedule entity");
                 continue;
             }
-
-            // 2. Clasificación completa
             Map<String, BigDecimal> fullClassification = hourClassificationService.classifyScheduleHours(Arrays.asList(scheduleEntity));
-            System.out.println("CLASIFICACIÓN COMPLETA:");
             if (fullClassification.isEmpty()) {
-                System.out.println("  (Vacía)");
             } else {
                 fullClassification.forEach((type, hours) -> {
                     if (hours.compareTo(BigDecimal.ZERO) > 0) {
-                        System.out.println("  " + type + ": " + hours + "h");
                     }
                 });
             }
-
-            // 3. Probar solo un día como muestra
             LocalDate testDate = LocalDate.of(2025, 9, 7); // Domingo
             Map<String, BigDecimal> dayClassification = hourClassificationService.classifyDayHours(scheduleEntity, testDate);
-            System.out.println("DÍA " + testDate + " (DOMINGO):");
             if (dayClassification.isEmpty()) {
-                System.out.println("  (Vacía)");
+
             } else {
                 dayClassification.forEach((type, hours) ->
                         System.out.println("  " + type + ": " + hours + "h"));
             }
             boolean hasSpecial = hourClassificationService.hasSpecialHours(dayClassification);
-            System.out.println("  ¿Especiales? " + hasSpecial);
-
-            System.out.println("*** FIN SCHEDULE " + schedule.getId() + " ***\n");
         }
 
-        System.out.println("=== FIN DIAGNÓSTICO ===");
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     public Map<String, Object> getDailyBreakdown(Long employeeId) {
         try {
             // 1. Obtener resumen consolidado
@@ -384,7 +262,6 @@ public class EmployeeScheduleService {
             // Obtener clasificación completa de TODOS los schedules juntos
             Map<String, BigDecimal> completeClassification = hourClassificationService.classifyScheduleHours(allScheduleEntities);
 
-            System.out.println("CLASIFICACIÓN COMPLETA DE TODOS LOS SCHEDULES:");
             completeClassification.forEach((type, hours) -> {
                 if (hours.compareTo(BigDecimal.ZERO) > 0) {
                     System.out.println("  " + type + ": " + hours + "h");
@@ -463,9 +340,7 @@ public class EmployeeScheduleService {
                                 }
 
                                 dailyDetails.add(dayDetail);
-                                System.out.println("✅ Día agregado al reporte: " + dateStr + " - Tipo: " + dayType);
                             } else {
-                                System.out.println("🔇 Día FILTRADO (solo horas regulares): " + dateStr);
                             }
                         }
                     }

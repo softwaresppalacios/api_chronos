@@ -77,15 +77,9 @@ public class EmployeeScheduleController {
                 body.put("message", "Debe proporcionar al menos una asignación");
                 return ResponseEntity.badRequest().body(body);
             }
-
-            // ===== DEBUG LOGGING =====
-            System.out.println("=== ASSIGN MULTIPLE REQUEST ===");
-            System.out.println("Request: " + request);
-            System.out.println("Assignments size: " + request.getAssignments().size());
-
             for (int i = 0; i < request.getAssignments().size(); i++) {
                 ScheduleDto.ScheduleAssignment a = request.getAssignments().get(i);
-                System.out.println("Assignment " + i + ": " + a);
+
 
                 // Validación básica de cada assignment
                 if (a.getEmployeeId() == null || a.getEmployeeId() <= 0) {
@@ -109,9 +103,6 @@ public class EmployeeScheduleController {
                     return ResponseEntity.badRequest().body(body);
                 }
             }
-            System.out.println("=== END DEBUG ===");
-
-            // ===== PROCESAMIENTO PRINCIPAL =====
             AssignmentResult result = employeeScheduleService.processMultipleAssignments(request);
 
             // ===== VALIDACIÓN DE RESULTADO =====
@@ -133,15 +124,12 @@ public class EmployeeScheduleController {
                 }
             }
 
-            // ===== RESPUESTA EXITOSA =====
             body.put("success", result.isSuccess());
             if (result.getMessage() != null && !result.getMessage().isBlank()) {
                 body.put("message", result.getMessage());
             }
             body.put("result", result);
 
-            System.out.println("Asignación completada exitosamente para " +
-                    request.getAssignments().size() + " asignaciones");
 
             return ResponseEntity.ok(body);
 
@@ -304,25 +292,15 @@ public class EmployeeScheduleController {
             @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate,
             @RequestParam(required = false) @DateTimeFormat(pattern = "HH:mm:ss") LocalTime startTime,
             @RequestParam(required = false) Long shiftId) {
-
-        // Validar que al menos hay un parámetro de búsqueda
         if (dependencyId == null && startDate == null && endDate == null && startTime == null && shiftId == null) {
-            System.out.println("ERROR: No se proporcionaron parámetros de búsqueda");
             return ResponseEntity.badRequest().build();
         }
 
         try {
-            System.out.println("Parámetros recibidos:");
-            System.out.println("- dependencyId: " + (dependencyId != null ? dependencyId : "TODAS"));
-            System.out.println("- startDate: " + startDate);
-            System.out.println("- endDate: " + endDate);
-            System.out.println("- startTime: " + startTime);
-            System.out.println("- shiftId: " + shiftId);
 
             List<Map<String, Object>> result = employeeScheduleService.getSchedulesByDependencyId(
                     dependencyId, startDate, endDate, startTime, shiftId);
 
-            System.out.println("Resultado: " + result.size() + " grupos encontrados");
             return ResponseEntity.ok(result);
 
         } catch (Exception e) {
@@ -352,12 +330,7 @@ public class EmployeeScheduleController {
         }
 
         try {
-            System.out.println("=== ENDPOINT /employee/" + employeeId + " ===");
-
-            // ESTA debe ser la línea clave - llamando al método correcto
             List<EmployeeScheduleDTO> schedules = employeeScheduleService.getCompleteSchedulesByEmployeeId(employeeId);
-
-            System.out.println("Schedules encontrados: " + schedules.size());
             return ResponseEntity.ok(schedules);
 
         } catch (Exception e) {
@@ -367,10 +340,6 @@ public class EmployeeScheduleController {
         }
     }
 
-
-
-
-        // =================== SCHEDULE CRUD ===================
 
     @PostMapping
     public ResponseEntity<List<Map<String, Object>>> createSchedules(

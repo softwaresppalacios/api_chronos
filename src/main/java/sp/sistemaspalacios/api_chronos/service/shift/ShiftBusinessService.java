@@ -881,17 +881,5 @@ public class ShiftBusinessService {
     // Acepta "HH:mm" o "hh:mm AM/PM"
     private static final DateTimeFormatter F12 = DateTimeFormatter.ofPattern("hh:mm a");
 
-    private LocalTime parseAny(String raw) {
-        if (raw == null) {
-            throw new IllegalArgumentException("Hora nula");
-        }
-        String s = raw.trim().toUpperCase();
-        // 12h: "07:00 AM" / "7:00 PM"
-        if (s.matches("^\\d{1,2}:\\d{2}\\s*(AM|PM)$")) {
-            return LocalTime.parse(s, F12);
-        }
-        // 24h: "07:00" / "19:30"
-        return LocalTime.parse(s);
-    }
 
 }
