@@ -7,6 +7,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.dto.employee.EmployeeHoursSummaryDTO;
 import sp.sistemaspalacios.api_chronos.dto.employee.EmployeeScheduleDTO;
+import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleAssignmentGroupDTO;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.AssignmentRequest;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.AssignmentResult;
@@ -23,6 +24,7 @@ import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleDayRepository;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleTimeBlockRepository;
 import sp.sistemaspalacios.api_chronos.service.common.TimeService;
+import sp.sistemaspalacios.api_chronos.service.employeeSchedule.assignment.ScheduleAssignmentGroupService;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.core.EmployeeScheduleService;
 
 import java.sql.Time;
@@ -40,15 +42,17 @@ public class EmployeeScheduleController {
     private final EmployeeScheduleDayRepository employeeScheduleDayRepository;
     private final EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository;
     private final TimeService timeService;
-
+    private final ScheduleAssignmentGroupService groupService;
     public EmployeeScheduleController(EmployeeScheduleService employeeScheduleService, TimeService timeService,
                                       EmployeeScheduleDayRepository employeeScheduleDayRepository,
-                                      EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository
+                                      EmployeeScheduleTimeBlockRepository employeeScheduleTimeBlockRepository,
+                                      ScheduleAssignmentGroupService groupService
                                       ) {
         this.employeeScheduleService = employeeScheduleService;
         this.employeeScheduleDayRepository = employeeScheduleDayRepository;
         this.employeeScheduleTimeBlockRepository = employeeScheduleTimeBlockRepository;
         this.timeService = timeService;
+        this.groupService = groupService;
 
 
     }
@@ -413,151 +417,319 @@ public class EmployeeScheduleController {
         }
     }
 
-    @PutMapping("/time-blocks")
-    public ResponseEntity<Map<String, Object>> updateTimeBlock(
-            @RequestBody TimeBlockDTO timeBlockDTO) {
+
+    // ✅ MÉTODO DE RECÁLCULO MEJORADO Y SINCRONIZADO
+    private void recalculateEmployeeGroupsSync(Long employeeId) {
         try {
-            validateTimeBlockInput(timeBlockDTO);
-            EmployeeScheduleTimeBlock updatedBlock = employeeScheduleService.updateTimeBlock(timeBlockDTO);
-            Map<String, Object> response = createTimeBlockResponse(updatedBlock);
-            return ResponseEntity.ok(response);
-        } catch (ResourceNotFoundException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of("error", e.getMessage()));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest()
-                    .body(Map.of("error", e.getMessage()));
+            System.out.println("\n🔄 === INICIANDO RECÁLCULO PARA EMPLEADO: " + employeeId + " ===");
+
+            // Verificar que groupService no sea null
+            if (groupService == null) {
+                System.err.println("❌ ERROR CRÍTICO: groupService es NULL");
+                return;
+            }
+
+            // Obtener grupos del empleado
+            List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(employeeId);
+            System.out.println("📊 GRUPOS ENCONTRADOS: " + groups.size());
+
+            if (groups.isEmpty()) {
+                System.out.println("⚠️ NO HAY GRUPOS PARA RECALCULAR - empleado: " + employeeId);
+                return;
+            }
+
+            // Recalcular cada grupo
+            int recalculatedCount = 0;
+            for (ScheduleAssignmentGroupDTO group : groups) {
+                try {
+                    System.out.println("\n🔢 RECALCULANDO GRUPO ID: " + group.getId());
+
+                    // ANTES DEL RECÁLCULO
+                    System.out.println("📊 ANTES:");
+                    System.out.println("  - Total Hours: " + group.getTotalHours());
+                    System.out.println("  - Regular Hours: " + group.getRegularHours());
+                    System.out.println("  - Overtime Hours: " + group.getOvertimeHours());
+
+                    // EJECUTAR RECÁLCULO
+                    groupService.recalculateGroup(group.getId());
+
+                    // VERIFICAR DESPUÉS
+                    ScheduleAssignmentGroupDTO updated = groupService.getGroupById(group.getId());
+                    System.out.println("📊 DESPUÉS:");
+                    System.out.println("  - Total Hours: " + updated.getTotalHours());
+                    System.out.println("  - Regular Hours: " + updated.getRegularHours());
+                    System.out.println("  - Overtime Hours: " + updated.getOvertimeHours());
+
+                    recalculatedCount++;
+                    System.out.println("✅ GRUPO " + group.getId() + " RECALCULADO EXITOSAMENTE");
+
+                } catch (Exception e) {
+                    System.err.println("❌ ERROR RECALCULANDO GRUPO " + group.getId() + ": " + e.getMessage());
+                    e.printStackTrace();
+                }
+            }
+
+            System.out.println("\n✅ === RECÁLCULO COMPLETADO ===");
+            System.out.println("👤 Empleado: " + employeeId);
+            System.out.println("📊 Grupos recalculados: " + recalculatedCount + "/" + groups.size());
+
+        } catch (Exception e) {
+            System.err.println("❌ ERROR GENERAL EN RECÁLCULO EMPLEADO " + employeeId + ": " + e.getMessage());
+            e.printStackTrace();
         }
     }
+    private void autoRecalculateEmployeeGroups(Long employeeId) {
+        try {
+            System.out.println("🔄 === INICIANDO RECÁLCULO PARA EMPLEADO: " + employeeId + " ===");
 
+            // Verificar que groupService no sea null
+            if (groupService == null) {
+                System.err.println("❌ ERROR CRÍTICO: groupService es NULL");
+                return;
+            }
+
+            List<ScheduleAssignmentGroupDTO> groups = groupService.getEmployeeGroups(employeeId);
+            System.out.println("📊 GRUPOS ENCONTRADOS: " + groups.size());
+
+            if (groups.isEmpty()) {
+                System.out.println("⚠️ NO HAY GRUPOS PARA RECALCULAR - empleado: " + employeeId);
+                return;
+            }
+
+            for (ScheduleAssignmentGroupDTO group : groups) {
+                try {
+                    System.out.println("🔢 RECALCULANDO GRUPO ID: " + group.getId());
+
+                    // ANTES DEL RECÁLCULO
+                    System.out.println("📊 ANTES - Total Hours: " + group.getTotalHours());
+                    System.out.println("📊 ANTES - Regular Hours: " + group.getRegularHours());
+
+                    groupService.recalculateGroup(group.getId());
+
+                    // VERIFICAR DESPUÉS
+                    ScheduleAssignmentGroupDTO updated = groupService.getGroupById(group.getId());
+                    System.out.println("📊 DESPUÉS - Total Hours: " + updated.getTotalHours());
+                    System.out.println("📊 DESPUÉS - Regular Hours: " + updated.getRegularHours());
+
+                    System.out.println("✅ GRUPO " + group.getId() + " RECALCULADO EXITOSAMENTE");
+
+                } catch (Exception e) {
+                    System.err.println("❌ ERROR RECALCULANDO GRUPO " + group.getId() + ": " + e.getMessage());
+                    e.printStackTrace();
+                }
+            }
+
+            System.out.println("✅ === RECÁLCULO COMPLETADO PARA EMPLEADO: " + employeeId + " ===");
+
+        } catch (Exception e) {
+            System.err.println("❌ ERROR EN RECÁLCULO EMPLEADO " + employeeId + ": " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
     @PutMapping("/time-blocks/by-dependency")
     public ResponseEntity<Map<String, Object>> updateTimeBlocksByDependency(
             @RequestBody List<TimeBlockDependencyDTO> timeBlockDTOList) {
         try {
             if (timeBlockDTOList == null || timeBlockDTOList.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("error", "No se proporcionaron bloques de tiempo."));
+                return ResponseEntity.badRequest().build();
             }
 
             List<Map<String, Object>> processedBlocks = new ArrayList<>();
+            Map<String, Object> response = new LinkedHashMap<>();
+
+            // 📊 RECOLECTAR EMPLEADOS AFECTADOS PARA RECÁLCULO
             Set<Long> affectedEmployees = new HashSet<>();
-            int successCount = 0;
-            int errorCount = 0;
+
+            System.out.println("📄 PROCESANDO " + timeBlockDTOList.size() + " BLOQUES");
 
             for (TimeBlockDependencyDTO timeBlockDTO : timeBlockDTOList) {
+                System.out.println("\n📦 PROCESANDO BLOQUE: " + timeBlockDTO);
+                System.out.println("  - ID: " + timeBlockDTO.getId());
+                System.out.println("  - Start Time: " + timeBlockDTO.getStartTime());
+                System.out.println("  - End Time: " + timeBlockDTO.getEndTime());
+                System.out.println("  - Break Start Time: " + timeBlockDTO.getBreakStartTime());
+                System.out.println("  - Break End Time: " + timeBlockDTO.getBreakEndTime());
+
+                // 📊 AGREGAR EMPLEADO A LA LISTA DE AFECTADOS
+                if (timeBlockDTO.getNumberId() != null) {
+                    try {
+                        affectedEmployees.add(timeBlockDTO.getNumberId());
+                    } catch (Exception e) {
+                        System.err.println("⚠️ Error parseando employeeId: " + timeBlockDTO.getNumberId());
+                    }
+                }
+
                 try {
-                    if (timeBlockDTO.getEmployeeScheduleDayId() == null || timeBlockDTO.getEmployeeScheduleDayId() <= 0) {
-                        errorCount++;
+                    // Validaciones básicas
+                    if (timeBlockDTO.getEmployeeScheduleDayId() == null) {
+                        System.out.println("❌ ERROR: employeeScheduleDayId es null");
                         continue;
                     }
 
-                    EmployeeScheduleDay day = employeeScheduleDayRepository
-                            .findById(timeBlockDTO.getEmployeeScheduleDayId())
-                            .orElse(null);
+                    boolean isDelete = (timeBlockDTO.getStartTime() == null || timeBlockDTO.getStartTime().trim().isEmpty()) &&
+                            (timeBlockDTO.getEndTime() == null || timeBlockDTO.getEndTime().trim().isEmpty());
 
-                    if (day == null) {
-                        errorCount++;
-                        continue;
-                    }
+                    if (timeBlockDTO.getId() != null && timeBlockDTO.getId() > 0) {
+                        // ✅ ACTUALIZAR BLOQUE EXISTENTE
+                        System.out.println("📄 ACTUALIZANDO BLOQUE EXISTENTE ID: " + timeBlockDTO.getId());
 
-                    Long employeeId = day.getEmployeeSchedule().getEmployeeId();
-                    affectedEmployees.add(employeeId);
-
-                    boolean shouldDelete = isInvalidTimeBlock(timeBlockDTO.getStartTime(), timeBlockDTO.getEndTime());
-
-                    if (shouldDelete) {
-                        // ELIMINAR BLOQUE
-                        if (timeBlockDTO.getId() != null && timeBlockDTO.getId() > 0) {
-                            employeeScheduleTimeBlockRepository.deleteById(timeBlockDTO.getId());
-
-                            List<EmployeeScheduleTimeBlock> remainingBlocks =
-                                    employeeScheduleTimeBlockRepository.findByEmployeeScheduleDayId(day.getId());
-
-                            if (remainingBlocks.isEmpty()) {
-                                employeeScheduleDayRepository.deleteById(day.getId());
-                            }
-
-                            Map<String, Object> blockResponse = new LinkedHashMap<>();
-                            blockResponse.put("id", timeBlockDTO.getId());
-                            blockResponse.put("action", "DELETED");
-                            blockResponse.put("numberId", timeBlockDTO.getNumberId());
-                            processedBlocks.add(blockResponse);
-                        }
-                    } else if (timeBlockDTO.getId() != null && timeBlockDTO.getId() > 0) {
-                        // ACTUALIZAR BLOQUE EXISTENTE
                         EmployeeScheduleTimeBlock existingBlock = employeeScheduleTimeBlockRepository
                                 .findById(timeBlockDTO.getId()).orElse(null);
 
                         if (existingBlock != null) {
-                            existingBlock.setStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getStartTime())));
-                            existingBlock.setEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getEndTime())));
-                            existingBlock.setUpdatedAt(new Date());
+                            if (isDelete) {
+                                // ✅ ELIMINAR BLOQUE
+                                System.out.println("🗑️ ELIMINANDO BLOQUE ID: " + timeBlockDTO.getId());
+                                employeeScheduleTimeBlockRepository.delete(existingBlock);
 
-                            EmployeeScheduleTimeBlock updatedBlock = employeeScheduleTimeBlockRepository.save(existingBlock);
+                                Map<String, Object> blockResponse = new LinkedHashMap<>();
+                                blockResponse.put("id", timeBlockDTO.getId());
+                                blockResponse.put("action", "DELETED");
+                                blockResponse.put("numberId", timeBlockDTO.getNumberId());
+                                processedBlocks.add(blockResponse);
+                            } else {
+                                // ✅ ACTUALIZAR BLOQUE CON BREAKS
+                                System.out.println("💾 ACTUALIZANDO CONTENIDO DEL BLOQUE");
 
-                            Map<String, Object> blockResponse = new LinkedHashMap<>();
-                            blockResponse.put("id", updatedBlock.getId());
-                            blockResponse.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
-                            blockResponse.put("startTime", updatedBlock.getStartTime().toString());
-                            blockResponse.put("endTime", updatedBlock.getEndTime().toString());
-                            blockResponse.put("numberId", timeBlockDTO.getNumberId());
-                            blockResponse.put("action", "UPDATED");
-                            processedBlocks.add(blockResponse);
+                                existingBlock.setStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getStartTime())));
+                                existingBlock.setEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getEndTime())));
+
+                                // ✅ MANEJAR BREAKS EN ACTUALIZACIÓN
+                                if (timeBlockDTO.getBreakStartTime() != null && !timeBlockDTO.getBreakStartTime().trim().isEmpty()) {
+                                    existingBlock.setBreakStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getBreakStartTime())));
+                                    System.out.println("☕ Break start actualizado: " + timeBlockDTO.getBreakStartTime());
+                                } else {
+                                    existingBlock.setBreakStartTime(null);
+                                    System.out.println("🧹 Break start limpiado");
+                                }
+
+                                if (timeBlockDTO.getBreakEndTime() != null && !timeBlockDTO.getBreakEndTime().trim().isEmpty()) {
+                                    existingBlock.setBreakEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getBreakEndTime())));
+                                    System.out.println("☕ Break end actualizado: " + timeBlockDTO.getBreakEndTime());
+                                } else {
+                                    existingBlock.setBreakEndTime(null);
+                                    System.out.println("🧹 Break end limpiado");
+                                }
+
+                                existingBlock.setUpdatedAt(new Date());
+                                EmployeeScheduleTimeBlock updatedBlock = employeeScheduleTimeBlockRepository.save(existingBlock);
+
+                                // Respuesta con breaks incluidos
+                                Map<String, Object> blockResponse = new LinkedHashMap<>();
+                                blockResponse.put("id", updatedBlock.getId());
+                                blockResponse.put("employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId());
+                                blockResponse.put("startTime", updatedBlock.getStartTime().toString());
+                                blockResponse.put("endTime", updatedBlock.getEndTime().toString());
+
+                                // ✅ INCLUIR BREAKS EN RESPUESTA
+                                if (updatedBlock.getBreakStartTime() != null) {
+                                    blockResponse.put("breakStartTime", updatedBlock.getBreakStartTime().toString());
+                                }
+                                if (updatedBlock.getBreakEndTime() != null) {
+                                    blockResponse.put("breakEndTime", updatedBlock.getBreakEndTime().toString());
+                                }
+
+                                blockResponse.put("numberId", timeBlockDTO.getNumberId());
+                                blockResponse.put("action", "UPDATED");
+                                processedBlocks.add(blockResponse);
+
+                                System.out.println("✅ BLOQUE ACTUALIZADO: " + blockResponse);
+                            }
                         } else {
-                            errorCount++;
-                            continue;
+                            System.out.println("❌ NO SE ENCONTRÓ BLOQUE CON ID: " + timeBlockDTO.getId());
                         }
-                    } else {
-                        // CREAR NUEVO BLOQUE
-                        EmployeeScheduleTimeBlock newBlock = new EmployeeScheduleTimeBlock();
-                        newBlock.setEmployeeScheduleDay(day);
-                        newBlock.setStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getStartTime())));
-                        newBlock.setEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getEndTime())));
-                        newBlock.setCreatedAt(new Date());
+                    } else if (!isDelete) {
+                        // ✅ CREAR NUEVO BLOQUE CON BREAKS
+                        System.out.println("➕ CREANDO NUEVO BLOQUE");
 
-                        EmployeeScheduleTimeBlock savedBlock = employeeScheduleTimeBlockRepository.save(newBlock);
+                        EmployeeScheduleDay day = employeeScheduleDayRepository
+                                .findById(timeBlockDTO.getEmployeeScheduleDayId()).orElse(null);
 
-                        Map<String, Object> blockResponse = new LinkedHashMap<>();
-                        blockResponse.put("id", savedBlock.getId());
-                        blockResponse.put("employeeScheduleDayId", savedBlock.getEmployeeScheduleDay().getId());
-                        blockResponse.put("startTime", savedBlock.getStartTime().toString());
-                        blockResponse.put("endTime", savedBlock.getEndTime().toString());
-                        blockResponse.put("numberId", timeBlockDTO.getNumberId());
-                        blockResponse.put("action", "CREATED");
-                        processedBlocks.add(blockResponse);
+                        if (day != null) {
+                            EmployeeScheduleTimeBlock newBlock = new EmployeeScheduleTimeBlock();
+                            newBlock.setEmployeeScheduleDay(day);
+                            newBlock.setStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getStartTime())));
+                            newBlock.setEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getEndTime())));
+
+                            // ✅ MANEJAR BREAKS EN CREACIÓN
+                            if (timeBlockDTO.getBreakStartTime() != null && !timeBlockDTO.getBreakStartTime().trim().isEmpty()) {
+                                newBlock.setBreakStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getBreakStartTime())));
+                                System.out.println("☕ Break start asignado: " + timeBlockDTO.getBreakStartTime());
+                            }
+
+                            if (timeBlockDTO.getBreakEndTime() != null && !timeBlockDTO.getBreakEndTime().trim().isEmpty()) {
+                                newBlock.setBreakEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getBreakEndTime())));
+                                System.out.println("☕ Break end asignado: " + timeBlockDTO.getBreakEndTime());
+                            }
+
+                            newBlock.setCreatedAt(new Date());
+                            EmployeeScheduleTimeBlock savedBlock = employeeScheduleTimeBlockRepository.save(newBlock);
+
+                            // Respuesta con breaks incluidos
+                            Map<String, Object> blockResponse = new LinkedHashMap<>();
+                            blockResponse.put("id", savedBlock.getId());
+                            blockResponse.put("employeeScheduleDayId", savedBlock.getEmployeeScheduleDay().getId());
+                            blockResponse.put("startTime", savedBlock.getStartTime().toString());
+                            blockResponse.put("endTime", savedBlock.getEndTime().toString());
+
+                            // ✅ INCLUIR BREAKS EN RESPUESTA
+                            if (savedBlock.getBreakStartTime() != null) {
+                                blockResponse.put("breakStartTime", savedBlock.getBreakStartTime().toString());
+                            }
+                            if (savedBlock.getBreakEndTime() != null) {
+                                blockResponse.put("breakEndTime", savedBlock.getBreakEndTime().toString());
+                            }
+
+                            blockResponse.put("numberId", timeBlockDTO.getNumberId());
+                            blockResponse.put("action", "CREATED");
+                            processedBlocks.add(blockResponse);
+
+                            System.out.println("✅ BLOQUE CREADO: " + blockResponse);
+                        } else {
+                            System.out.println("❌ NO SE ENCONTRÓ DÍA CON ID: " + timeBlockDTO.getEmployeeScheduleDayId());
+                        }
                     }
-
-                    successCount++;
-
                 } catch (Exception e) {
-                    errorCount++;
+                    System.err.println("❌ ERROR PROCESANDO BLOQUE: " + e.getMessage());
+                    e.printStackTrace();
                 }
             }
 
-            // Limpiar empleados afectados
-            for (Long employeeId : affectedEmployees) {
+            // ✅ RECÁLCULO AUTOMÁTICO PARA EMPLEADOS AFECTADOS
+            if (!affectedEmployees.isEmpty()) {
                 try {
-                    employeeScheduleService.cleanupEmptyDaysForEmployee(employeeId);
+                    System.out.println("🔄 INICIANDO RECÁLCULO MASIVO PARA " + affectedEmployees.size() + " EMPLEADOS");
+                    for (Long employeeId : affectedEmployees) {
+                        try {
+                            autoRecalculateEmployeeGroups(employeeId);
+                            System.out.println("✅ Recálculo completado para empleado: " + employeeId);
+                        } catch (Exception e) {
+                            System.err.println("⚠️ Error recalculando empleado " + employeeId + ": " + e.getMessage());
+                        }
+                    }
+                    System.out.println("🔄 RECÁLCULO MASIVO COMPLETADO para " + affectedEmployees.size() + " empleados");
                 } catch (Exception e) {
-                    // Log error but continue
+                    System.err.println("⚠️ ERROR EN RECÁLCULO MASIVO: " + e.getMessage());
                 }
             }
 
-            Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
-            response.put("message", "Bloques procesados correctamente");
-            response.put("processedCount", successCount);
-            response.put("errorCount", errorCount);
+            response.put("message", "Time blocks processed successfully");
             response.put("processedBlocks", processedBlocks);
-            response.put("affectedEmployees", affectedEmployees.size());
+            response.put("totalProcessed", processedBlocks.size());
+            response.put("recalculatedEmployees", affectedEmployees.size());
+
+            System.out.println("\n✅ PROCESAMIENTO COMPLETADO: " + processedBlocks.size() + " bloques");
 
             return ResponseEntity.ok(response);
 
         } catch (Exception e) {
+            System.err.println("❌ ERROR GENERAL: " + e.getMessage());
+            e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Error interno del servidor: " + e.getMessage()));
+                    .body(Map.of("success", false, "message", "Error processing time blocks"));
         }
     }
-
     @DeleteMapping("/timeblocks/{timeBlockId}")
     public ResponseEntity<Map<String, Object>> deleteTimeBlock(@PathVariable Long timeBlockId) {
         try {
@@ -599,17 +771,38 @@ public class EmployeeScheduleController {
                     .findById(dayId)
                     .orElseThrow(() -> new ResourceNotFoundException("Día de horario no encontrado con id: " + dayId));
 
-            // Primero eliminar todos los timeBlocks de este día
+            // 📊 OBTENER EMPLOYEE ID ANTES DE ELIMINAR
+            Long employeeId = null;
+            try {
+                employeeId = day.getEmployeeSchedule().getEmployeeId();
+                System.out.println("👤 Employee ID identificado antes de eliminar: " + employeeId);
+            } catch (Exception e) {
+                System.err.println("⚠️ Error obteniendo employeeId: " + e.getMessage());
+            }
+
+            // Eliminar todos los timeBlocks de este día
             employeeScheduleTimeBlockRepository.deleteByEmployeeScheduleDayId(dayId);
 
-            // Luego eliminar el día mismo
+            // Eliminar el día mismo
             employeeScheduleDayRepository.deleteById(dayId);
+
+            System.out.println("🗑️ DÍA ELIMINADO EXITOSAMENTE: " + dayId);
+
+            // ✅ RECÁLCULO AUTOMÁTICO DESPUÉS DE ELIMINAR
+            if (employeeId != null) {
+                System.out.println("🔄 INICIANDO RECÁLCULO PARA EMPLEADO: " + employeeId);
+                recalculateEmployeeGroupsSync(employeeId);
+            } else {
+                System.err.println("❌ NO SE PUDO RECALCULAR - employeeId es NULL");
+            }
 
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("success", true);
             response.put("message", "Día y sus horarios eliminados completamente");
             response.put("dayId", dayId);
             response.put("date", day.getDate());
+            response.put("employeeId", employeeId);
+            response.put("recalculated", employeeId != null);
 
             return ResponseEntity.ok(response);
 
@@ -617,13 +810,12 @@ public class EmployeeScheduleController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
+            System.err.println("❌ ERROR ELIMINANDO DÍA: " + e.getMessage());
+            e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Error interno del servidor: " + e.getMessage()));
         }
     }
-
-    // =================== MAINTENANCE OPERATIONS ===================
-
     @PostMapping("/cleanup-empty-days/{employeeId}")
     public ResponseEntity<Map<String, Object>> cleanupEmptyDaysForEmployee(
             @PathVariable Long employeeId) {
@@ -807,9 +999,31 @@ public class EmployeeScheduleController {
     }
 
     private Map<String, String> convertTimeBlockToMap(EmployeeScheduleTimeBlock block) {
+        System.out.println("🔄 Convirtiendo TimeBlock a Map:");
+        System.out.println("  - ID: " + block.getId());
+        System.out.println("  - Horario: " + block.getStartTime() + " - " + block.getEndTime());
+        System.out.println("  - Breaks: " + block.getBreakStartTime() + " - " + block.getBreakEndTime());
+
         Map<String, String> blockMap = new HashMap<>();
         blockMap.put("startTime", block.getStartTime().toString());
         blockMap.put("endTime", block.getEndTime().toString());
+
+        // ✅ INCLUIR BREAKS EN EL MAP
+        if (block.getBreakStartTime() != null) {
+            blockMap.put("breakStartTime", block.getBreakStartTime().toString());
+            System.out.println("☕ Break start incluido en map: " + block.getBreakStartTime());
+        } else {
+            System.out.println("❌ Break start es null, no incluido en map");
+        }
+
+        if (block.getBreakEndTime() != null) {
+            blockMap.put("breakEndTime", block.getBreakEndTime().toString());
+            System.out.println("☕ Break end incluido en map: " + block.getBreakEndTime());
+        } else {
+            System.out.println("❌ Break end es null, no incluido en map");
+        }
+
+        System.out.println("📦 Map final: " + blockMap);
         return blockMap;
     }
 
@@ -826,4 +1040,172 @@ public class EmployeeScheduleController {
                     .body(Map.of("error", "No se pudo obtener el detalle diario"));
         }
     }
+
+
+
+
+    @PutMapping("/time-blocks/{id}")
+    public ResponseEntity<Map<String, Object>> updateTimeBlock(
+            @PathVariable Long id,
+            @RequestBody TimeBlockDTO timeBlockDTO) {
+        try {
+            System.out.println("\n📄 === ENDPOINT PUT INDIVIDUAL TIMEBLOCK ===");
+            System.out.println("📦 ID del bloque: " + id);
+            System.out.println("📦 DTO recibido: " + timeBlockDTO);
+            System.out.println("  - Start Time: " + timeBlockDTO.getStartTime());
+            System.out.println("  - End Time: " + timeBlockDTO.getEndTime());
+            System.out.println("  - Break Start Time: " + timeBlockDTO.getBreakStartTime());
+            System.out.println("  - Break End Time: " + timeBlockDTO.getBreakEndTime());
+            System.out.println("  - Number ID (DTO): " + timeBlockDTO.getNumberId());
+
+            if (timeBlockDTO == null) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("success", false, "message", "TimeBlockDTO es requerido"));
+            }
+
+            timeBlockDTO.setId(id);
+
+            EmployeeScheduleTimeBlock existingBlock = employeeScheduleTimeBlockRepository
+                    .findById(id)
+                    .orElse(null);
+
+            if (existingBlock == null) {
+                System.out.println("❌ TimeBlock no encontrado con ID: " + id);
+                return ResponseEntity.notFound().build();
+            }
+
+            System.out.println("✅ TimeBlock encontrado: " + existingBlock.getId());
+
+            // 📊 OBTENER EMPLOYEE ID - MÉTODO MEJORADO CON DOBLE ESTRATEGIA
+            Long employeeId = null;
+
+            // ESTRATEGIA 1: Desde el DTO (más confiable)
+            if (timeBlockDTO.getNumberId() != null && !timeBlockDTO.getNumberId().isEmpty()) {
+                try {
+                    employeeId = Long.parseLong(timeBlockDTO.getNumberId());
+                    System.out.println("✅ Employee ID obtenido desde DTO: " + employeeId);
+                } catch (NumberFormatException e) {
+                    System.err.println("⚠️ Error parseando numberId del DTO: " + e.getMessage());
+                }
+            }
+
+            // ESTRATEGIA 2: Desde las relaciones (fallback)
+            if (employeeId == null) {
+                try {
+                    System.out.println("🔍 Intentando obtener employeeId desde relaciones...");
+                    if (existingBlock.getEmployeeScheduleDay() != null) {
+                        System.out.println("  ✓ EmployeeScheduleDay existe");
+                        if (existingBlock.getEmployeeScheduleDay().getEmployeeSchedule() != null) {
+                            System.out.println("  ✓ EmployeeSchedule existe");
+                            employeeId = existingBlock.getEmployeeScheduleDay()
+                                    .getEmployeeSchedule()
+                                    .getEmployeeId();
+                            System.out.println("✅ Employee ID obtenido desde relaciones: " + employeeId);
+                        } else {
+                            System.err.println("  ✗ EmployeeSchedule es NULL");
+                        }
+                    } else {
+                        System.err.println("  ✗ EmployeeScheduleDay es NULL");
+                    }
+                } catch (Exception e) {
+                    System.err.println("⚠️ Error obteniendo employeeId desde relaciones: " + e.getMessage());
+                    e.printStackTrace();
+                }
+            }
+
+            boolean isDelete = (timeBlockDTO.getStartTime() == null || timeBlockDTO.getStartTime().trim().isEmpty()) &&
+                    (timeBlockDTO.getEndTime() == null || timeBlockDTO.getEndTime().trim().isEmpty());
+
+            if (isDelete) {
+                System.out.println("🗑️ ELIMINANDO TIMEBLOCK ID: " + id);
+                employeeScheduleTimeBlockRepository.delete(existingBlock);
+
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("success", true);
+                response.put("message", "TimeBlock eliminado correctamente");
+                response.put("action", "DELETED");
+                response.put("id", id);
+
+                // ✅ RECÁLCULO AUTOMÁTICO DESPUÉS DE ELIMINAR
+                System.out.println("🔍 VERIFICANDO RECÁLCULO POST-ELIMINACIÓN:");
+                System.out.println("  - employeeId: " + employeeId);
+                System.out.println("  - employeeId es null?: " + (employeeId == null));
+
+                if (employeeId != null) {
+                    System.out.println("🚀 LLAMANDO A recalculateEmployeeGroupsSync...");
+                    recalculateEmployeeGroupsSync(employeeId);
+                } else {
+                    System.err.println("❌ employeeId ES NULL, no se puede recalcular");
+                }
+
+                return ResponseEntity.ok(response);
+
+            } else {
+                System.out.println("💾 ACTUALIZANDO TIMEBLOCK ID: " + id);
+
+                existingBlock.setStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getStartTime())));
+                existingBlock.setEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getEndTime())));
+
+                if (timeBlockDTO.getBreakStartTime() != null && !timeBlockDTO.getBreakStartTime().trim().isEmpty()) {
+                    existingBlock.setBreakStartTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getBreakStartTime())));
+                    System.out.println("☕ Break start actualizado: " + timeBlockDTO.getBreakStartTime());
+                } else {
+                    existingBlock.setBreakStartTime(null);
+                    System.out.println("🧹 Break start limpiado");
+                }
+
+                if (timeBlockDTO.getBreakEndTime() != null && !timeBlockDTO.getBreakEndTime().trim().isEmpty()) {
+                    existingBlock.setBreakEndTime(Time.valueOf(normalizeTimeString(timeBlockDTO.getBreakEndTime())));
+                    System.out.println("☕ Break end actualizado: " + timeBlockDTO.getBreakEndTime());
+                } else {
+                    existingBlock.setBreakEndTime(null);
+                    System.out.println("🧹 Break end limpiado");
+                }
+
+                existingBlock.setUpdatedAt(new Date());
+                EmployeeScheduleTimeBlock updatedBlock = employeeScheduleTimeBlockRepository.save(existingBlock);
+
+                // ✅ RECÁLCULO AUTOMÁTICO DESPUÉS DE ACTUALIZAR
+                System.out.println("🔍 VERIFICANDO RECÁLCULO POST-ACTUALIZACIÓN:");
+                System.out.println("  - employeeId: " + employeeId);
+                System.out.println("  - employeeId es null?: " + (employeeId == null));
+
+                if (employeeId != null) {
+                    System.out.println("🚀 LLAMANDO A recalculateEmployeeGroupsSync...");
+                    recalculateEmployeeGroupsSync(employeeId);
+                } else {
+                    System.err.println("❌ employeeId ES NULL, no se puede recalcular");
+                }
+
+                Map<String, Object> response = new LinkedHashMap<>();
+                response.put("success", true);
+                response.put("message", "TimeBlock actualizado correctamente");
+                response.put("action", "UPDATED");
+                response.put("data", Map.of(
+                        "id", updatedBlock.getId(),
+                        "employeeScheduleDayId", updatedBlock.getEmployeeScheduleDay().getId(),
+                        "startTime", updatedBlock.getStartTime().toString(),
+                        "endTime", updatedBlock.getEndTime().toString(),
+                        "breakStartTime", updatedBlock.getBreakStartTime() != null
+                                ? updatedBlock.getBreakStartTime().toString() : null,
+                        "breakEndTime", updatedBlock.getBreakEndTime() != null
+                                ? updatedBlock.getBreakEndTime().toString() : null,
+                        "updatedAt", updatedBlock.getUpdatedAt()
+                ));
+
+                System.out.println("✅ RESPUESTA GENERADA: " + response);
+                return ResponseEntity.ok(response);
+            }
+
+        } catch (Exception e) {
+            System.err.println("❌ ERROR EN PUT INDIVIDUAL: " + e.getMessage());
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("success", false, "message", "Error actualizando TimeBlock: " + e.getMessage()));
+        }
+    }
+
+
+
+
 }

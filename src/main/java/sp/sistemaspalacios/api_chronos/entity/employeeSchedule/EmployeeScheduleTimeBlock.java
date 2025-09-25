@@ -24,7 +24,11 @@ public class EmployeeScheduleTimeBlock {
     @Column(name = "created_at", nullable = false, updatable = false)
     @Temporal(TemporalType.TIMESTAMP)
     private Date createdAt;
+    @Column(name = "break_start_time")
+    private Time breakStartTime;
 
+    @Column(name = "break_end_time")
+    private Time breakEndTime;
     @Column(name = "updated_at")
     @Temporal(TemporalType.TIMESTAMP)
     private Date updatedAt;

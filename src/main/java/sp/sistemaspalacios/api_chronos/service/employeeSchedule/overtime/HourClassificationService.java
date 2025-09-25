@@ -133,26 +133,34 @@ public class HourClassificationService {
     private List<int[]> getTimeRangesForDateSimple(EmployeeSchedule schedule, LocalDate date) {
         List<int[]> ranges = new ArrayList<>();
         int dayOfWeek = date.getDayOfWeek().getValue();
+
+        // 🔍 LOG
+        System.out.println("getTimeRanges: Date=" + date + " ScheduleId=" + schedule.getId());
+
         if (schedule.getDays() != null) {
             Optional<EmployeeScheduleDay> dayOpt = schedule.getDays().stream()
                     .filter(d -> {
                         LocalDate dayDate = convertToLocalDateSafe(d.getDate());
-                        boolean matches = date.equals(dayDate);
-                        return matches;
+                        return date.equals(dayDate);
                     })
                     .findFirst();
 
             if (dayOpt.isPresent() && dayOpt.get().getTimeBlocks() != null && !dayOpt.get().getTimeBlocks().isEmpty()) {
                 for (EmployeeScheduleTimeBlock block : dayOpt.get().getTimeBlocks()) {
-                    ranges.add(new int[]{
+                    int[] range = new int[]{
                             toMinutes(block.getStartTime().toString()),
                             toMinutes(block.getEndTime().toString())
-                    });
+                    };
+                    ranges.add(range);
+
+                    // 🔍 LOG - Ver qué rangos se agregan
+                    System.out.println("  → Adding range: " + range[0] + "-" + range[1]);
                 }
+                System.out.println("  → Found " + ranges.size() + " ranges from DAYS");
                 return ranges;
-            } else {
             }
         }
+
         if (schedule.getShift() != null && schedule.getShift().getShiftDetails() != null) {
             if (schedule.getShift().getShiftDetails().isEmpty()) {
                 return ranges;
@@ -166,11 +174,11 @@ public class HourClassificationService {
                     });
                 }
             }
-        } else {
         }
+
+        System.out.println("  → Total ranges: " + ranges.size());
         return ranges;
     }
-
     private LocalDate convertToLocalDateSafe(Date date) {
         if (date == null) return null;
         try {
@@ -405,6 +413,7 @@ public class HourClassificationService {
 
         Map<String, BigDecimal> result = new HashMap<>();
         Map<String, Set<Long>> schedulesPerEmployeeDay = new HashMap<>();
+
         for (EmployeeSchedule schedule : schedules) {
             Long employeeId = schedule.getEmployeeId();
             Long scheduleId = schedule.getId();
@@ -417,7 +426,6 @@ public class HourClassificationService {
                     Set<Long> existingSchedules = schedulesPerEmployeeDay.getOrDefault(employeeDayKey, new HashSet<>());
                     existingSchedules.add(scheduleId);
                     schedulesPerEmployeeDay.put(employeeDayKey, existingSchedules);
-                } else {
                 }
             }
         }
@@ -425,7 +433,6 @@ public class HourClassificationService {
         for (EmployeeSchedule schedule : schedules) {
             Long employeeId = schedule.getEmployeeId();
             Long scheduleId = schedule.getId();
-
             List<LocalDate> dates = getDatesToProcess(schedule);
 
             for (LocalDate date : dates) {
@@ -433,7 +440,6 @@ public class HourClassificationService {
                 boolean isHoliday = holidays.contains(date);
                 boolean isSunday = (dayOfWeek == 7);
 
-                // Verificar exenciones
                 boolean hasExemption = checkHolidayExemption(employeeId, date);
                 String exemptionReason = hasExemption ?
                         holidayExemptionService.getExemptionReason(employeeId, date) : null;
@@ -443,36 +449,33 @@ public class HourClassificationService {
                     continue;
                 }
 
-                // DETECCIÓN CORRECTA: Si hay más de un schedule en esta fecha, los adicionales son extras
                 String employeeDayKey = employeeId + "-" + date.toString();
                 Set<Long> schedulesInDate = schedulesPerEmployeeDay.getOrDefault(employeeDayKey, new HashSet<>());
-
-                // El primer schedule (por ID más bajo) es regular, los demás son extras
                 List<Long> sortedSchedules = schedulesInDate.stream().sorted().collect(Collectors.toList());
                 boolean isOverlapExtra = sortedSchedules.size() > 1 && !sortedSchedules.get(0).equals(scheduleId);
 
                 List<int[]> timeRanges = getTimeRangesForDateSimple(schedule, date);
-
-                if (timeRanges.isEmpty()) {
-                    continue;
-                }
+                if (timeRanges.isEmpty()) continue;
 
                 for (int[] range : timeRanges) {
+                    System.out.println("Processing: Employee=" + employeeId +
+                            " Date=" + date +
+                            " ScheduleId=" + scheduleId +
+                            " Range=" + range[0] + "-" + range[1] +
+                            " IsHoliday=" + isHoliday);
                     int startMinutes = range[0];
                     int endMinutes = range[1];
-
-                    // Dividir en día/noche directamente
                     int[] split = splitDayNightSimple(startMinutes, endMinutes, nightStartMinutes);
                     int dayMinutes = split[0];
                     int nightMinutes = split[1];
-                    // Procesar horas diurnas
+
+                    // ✅ FIX: Procesar horas normalmente (diurnas y nocturnas)
                     if (dayMinutes > 0) {
                         processHoursSegment(employeeId, scheduleId, date, dayMinutes, false,
                                 isHoliday, isSunday, hasExemption, exemptionReason, isOverlapExtra,
                                 availableTypes, result);
                     }
 
-                    // Procesar horas nocturnas
                     if (nightMinutes > 0) {
                         processHoursSegment(employeeId, scheduleId, date, nightMinutes, true,
                                 isHoliday, isSunday, hasExemption, exemptionReason, isOverlapExtra,
@@ -484,7 +487,6 @@ public class HourClassificationService {
 
         return result;
     }
-    // REEMPLAZAR COMPLETO el método processHoursSegment
     private void processHoursSegment(Long employeeId, Long scheduleId, LocalDate date, int minutes, boolean isNight,
                                      boolean isHoliday, boolean isSunday, boolean hasExemption, String exemptionReason,
                                      boolean isOverlapExtra, Map<String, OvertimeTypeDTO> availableTypes,

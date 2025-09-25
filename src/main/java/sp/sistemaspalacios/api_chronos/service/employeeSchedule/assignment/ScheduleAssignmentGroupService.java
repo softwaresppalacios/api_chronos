@@ -302,9 +302,12 @@ public class ScheduleAssignmentGroupService {
 
     private void updateGroupTotalsSimple(ScheduleAssignmentGroup group, Map<String, BigDecimal> hoursByType) {
         BigDecimal regularHours = sumHoursByPrefix(hoursByType, "REGULAR_");
-        BigDecimal overtimeHours = sumHoursByPrefix(hoursByType, "EXTRA_").add(sumHoursByPrefix(hoursByType, "DOMINICAL_"));
+        BigDecimal overtimeHours = sumHoursByPrefix(hoursByType, "EXTRA_")
+                .add(sumHoursByPrefix(hoursByType, "DOMINICAL_"));
         BigDecimal festivoHours = sumHoursByPrefix(hoursByType, "FESTIVO_");
-        BigDecimal totalHours = regularHours.add(overtimeHours);
+
+        // ✅ CORRECCIÓN: Total incluye festivos sin duplicar
+        BigDecimal totalHours = regularHours.add(overtimeHours).add(festivoHours);
 
         group.setRegularHours(regularHours.setScale(2, RoundingMode.HALF_UP));
         group.setOvertimeHours(overtimeHours.setScale(2, RoundingMode.HALF_UP));
@@ -313,7 +316,6 @@ public class ScheduleAssignmentGroupService {
         group.setOvertimeType(findPredominantType(hoursByType, Arrays.asList("EXTRA_", "DOMINICAL_")));
         group.setFestivoType(findPredominantType(hoursByType, Arrays.asList("FESTIVO_")));
     }
-
     private BigDecimal sumHoursByPrefix(Map<String, BigDecimal> hoursByType, String prefix) {
         return hoursByType.entrySet().stream()
                 .filter(e -> e.getKey().startsWith(prefix))
@@ -364,8 +366,18 @@ public class ScheduleAssignmentGroupService {
         return convertToDTO(group, schedules, hoursByType);
     }
 
-    private ScheduleAssignmentGroupDTO convertToDTO(ScheduleAssignmentGroup group, List<EmployeeSchedule> schedules, Map<String, BigDecimal> hoursByType) {
+    private ScheduleAssignmentGroupDTO convertToDTO(ScheduleAssignmentGroup group,
+                                                    List<EmployeeSchedule> schedules,
+                                                    Map<String, BigDecimal> hoursByType) {
         ScheduleAssignmentGroupDTO dto = new ScheduleAssignmentGroupDTO();
+        System.out.println("=== DIAGNÓSTICO HORAS ===");
+        System.out.println("Employee ID: " + group.getEmployeeId());
+        hoursByType.forEach((key, value) -> {
+            if (value.compareTo(BigDecimal.ZERO) > 0) {
+                System.out.println(key + ": " + value);
+            }
+        });
+        System.out.println("========================");
 
         dto.setId(group.getId());
         dto.setEmployeeId(group.getEmployeeId());
@@ -376,9 +388,15 @@ public class ScheduleAssignmentGroupService {
 
         // Calcular totales directamente
         BigDecimal regularHours = sumHoursByPrefix(hoursByType, "REGULAR_");
-        BigDecimal overtimeHours = sumHoursByPrefix(hoursByType, "EXTRA_").add(sumHoursByPrefix(hoursByType, "DOMINICAL_"));
+        BigDecimal overtimeHours = sumHoursByPrefix(hoursByType, "EXTRA_")
+                .add(sumHoursByPrefix(hoursByType, "DOMINICAL_"));
         BigDecimal festivoHours = sumHoursByPrefix(hoursByType, "FESTIVO_");
-        BigDecimal totalHours = regularHours.add(overtimeHours);
+
+        // ✅ CORRECCIÓN: Total = regular + overtime + festivo (sin duplicar)
+        BigDecimal totalHours = regularHours.add(overtimeHours).add(festivoHours);
+
+        // ✅ assignedHours = solo las horas base trabajadas (regular + festivo)
+        // Pero NO duplicadas porque festivo ya está en totalHours
         BigDecimal assignedHours = regularHours.add(festivoHours);
 
         dto.setTotalHours(totalHours.setScale(2, RoundingMode.HALF_UP));
@@ -398,8 +416,6 @@ public class ScheduleAssignmentGroupService {
 
         return dto;
     }
-
-
     private boolean filterByEmployee(ScheduleAssignmentGroup group, Long employeeId) {
         return employeeId == null || Objects.equals(group.getEmployeeId(), employeeId);
     }

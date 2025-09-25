@@ -353,17 +353,30 @@ import java.util.stream.Collectors;
          }
      }
 
+     @Transactional
      public AssignmentResult processMultipleAssignments(AssignmentRequest request) {
          try {
+             // Validación básica del request
              scheduleValidationService.validateAssignmentRequest(request);
+
+             // ✅ VALIDACIÓN DE CONFLICTOS DE HORARIOS
+             // Esta validación permite turnos diferentes en mismas fechas SI los horarios NO se solapan
+             // Y bloquea cualquier turno con horarios solapados
              List<ScheduleConflict> conflicts = detectSameDateConflicts(request.getAssignments());
              if (!conflicts.isEmpty()) {
                  conflicts.forEach(conflict -> {
+                     System.err.println("Conflicto detectado: " + conflict.getMessage());
                  });
-                 throw new ConflictException("No se pueden asignar turnos con horarios solapados en la misma fecha", conflicts);
+                 throw new ConflictException(
+                         "No se pueden asignar turnos con horarios solapados en la misma fecha",
+                         conflicts
+                 );
              }
 
-             List<HolidayWarning> holidayWarnings = holidayProcessingService.detectHolidayWarnings(request.getAssignments());
+             // Detectar advertencias de días festivos
+             List<HolidayWarning> holidayWarnings = holidayProcessingService
+                     .detectHolidayWarnings(request.getAssignments());
+
              if (!holidayWarnings.isEmpty()) {
                  AssignmentResult preview = new AssignmentResult();
                  preview.setSuccess(false);
@@ -372,6 +385,8 @@ import java.util.stream.Collectors;
                  preview.setRequiresConfirmation(true);
                  return preview;
              }
+
+             // Crear y guardar los schedules
              List<EmployeeSchedule> created = new ArrayList<>();
              for (int i = 0; i < request.getAssignments().size(); i++) {
                  ScheduleAssignment a = request.getAssignments().get(i);
@@ -379,7 +394,10 @@ import java.util.stream.Collectors;
                      EmployeeSchedule s = createScheduleFromAssignment(a);
                      s.setDays(new ArrayList<>());
                      EmployeeSchedule saved = employeeScheduleRepository.save(s);
-                     scheduleDayGeneratorService.generateScheduleDaysWithHolidayDecisions(saved, Collections.emptyList());
+                     scheduleDayGeneratorService.generateScheduleDaysWithHolidayDecisions(
+                             saved,
+                             Collections.emptyList()
+                     );
                      EmployeeSchedule finalSaved = employeeScheduleRepository.save(saved);
                      created.add(finalSaved);
 
@@ -394,6 +412,11 @@ import java.util.stream.Collectors;
              employeeScheduleRepository.flush();
              AssignmentResult result = processCreatedSchedules(created);
              return result;
+
+         } catch (ConflictException ce) {
+             // Conflictos de horarios solapados
+             System.err.println("Conflict error: " + ce.getMessage());
+             throw ce;
 
          } catch (Exception e) {
              System.err.println("FATAL ERROR in processMultipleAssignments: " + e.getClass().getName());

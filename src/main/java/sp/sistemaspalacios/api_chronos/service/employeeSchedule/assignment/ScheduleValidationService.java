@@ -80,7 +80,40 @@ public class ScheduleValidationService {
         }
         return conflicts;
     }
+// En ScheduleValidationService.java
 
+    public void validateDuplicateAssignments(List<ScheduleAssignment> assignments) {
+        List<String> errors = new ArrayList<>();
+
+        for (ScheduleAssignment assignment : assignments) {
+            LocalDate endDate = assignment.getEndDate() != null
+                    ? assignment.getEndDate()
+                    : assignment.getStartDate();
+
+            // Buscar duplicados exactos
+            List<EmployeeSchedule> duplicates = employeeScheduleRepository
+                    .findDuplicateAssignments(
+                            assignment.getEmployeeId(),
+                            assignment.getShiftId(),
+                            assignment.getStartDate(),
+                            endDate
+                    );
+
+            if (!duplicates.isEmpty()) {
+                errors.add(String.format(
+                        "El empleado %d ya tiene asignado el turno %d desde %s hasta %s",
+                        assignment.getEmployeeId(),
+                        assignment.getShiftId(),
+                        assignment.getStartDate(),
+                        endDate
+                ));
+            }
+        }
+
+        if (!errors.isEmpty()) {
+            throw new ValidationException("Asignaciones duplicadas detectadas", errors);
+        }
+    }
     private ScheduleConflict checkForConflictWithTimeOverlap(ScheduleAssignment assignment, EmployeeSchedule existing) {
         LocalDate newStart = assignment.getStartDate();
         LocalDate newEnd = (assignment.getEndDate() != null) ? assignment.getEndDate() : newStart;
@@ -174,7 +207,9 @@ public class ScheduleValidationService {
             super(message);
             this.errors = errors;
         }
-
+        public List<String> getErrors() {
+            return errors;
+        }
 
     }
 }

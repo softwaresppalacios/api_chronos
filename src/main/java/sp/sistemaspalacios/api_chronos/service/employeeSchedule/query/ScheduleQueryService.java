@@ -321,6 +321,15 @@ public class ScheduleQueryService {
                         blockMap.put("id", block.getId());
                         blockMap.put("startTime", fmtTime(block.getStartTime()));
                         blockMap.put("endTime", fmtTime(block.getEndTime()));
+
+                        // ✅ AGREGAR BREAKS:
+                        if (block.getBreakStartTime() != null) {
+                            blockMap.put("breakStartTime", fmtTime(block.getBreakStartTime()));
+                        }
+                        if (block.getBreakEndTime() != null) {
+                            blockMap.put("breakEndTime", fmtTime(block.getBreakEndTime()));
+                        }
+
                         return blockMap;
                     })
                     .collect(Collectors.toList());
@@ -331,7 +340,6 @@ public class ScheduleQueryService {
 
         return dayMap;
     }
-
     private String extractDependencyName(Object dependency) {
         if (dependency == null) return null;
 

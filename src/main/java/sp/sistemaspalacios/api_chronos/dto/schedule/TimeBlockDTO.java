@@ -1,16 +1,16 @@
 package sp.sistemaspalacios.api_chronos.dto.schedule;
 
-import javax.swing.text.Position;
-
 public class TimeBlockDTO {
     private Long id;
     private Long employeeScheduleDayId;
-    private Long daysParentId;
     private String startTime;
     private String endTime;
-    private String numberId; // Campo para la cédula
+    private String numberId;
+    private String breakStartTime;
+    private String breakEndTime;
 
-    // Getters y Setters CORRECTOS
+    // =================== GETTERS Y SETTERS ===================
+
     public Long getId() {
         return id;
     }
@@ -43,7 +43,6 @@ public class TimeBlockDTO {
         this.endTime = endTime;
     }
 
-    // Getter y Setter para numberId (¡IMPORTANTE!)
     public String getNumberId() {
         return numberId;
     }
@@ -52,11 +51,32 @@ public class TimeBlockDTO {
         this.numberId = numberId;
     }
 
-    public Position getPosition() {
-        return null;
+    public String getBreakStartTime() {
+        return breakStartTime;
     }
 
-    public String getDaysParentId() {
-        return null;
+    public void setBreakStartTime(String breakStartTime) {
+        this.breakStartTime = breakStartTime;
+    }
+
+    public String getBreakEndTime() {
+        return breakEndTime;
+    }
+
+    public void setBreakEndTime(String breakEndTime) {
+        this.breakEndTime = breakEndTime;
+    }
+
+    @Override
+    public String toString() {
+        return "TimeBlockDTO{" +
+                "id=" + id +
+                ", employeeScheduleDayId=" + employeeScheduleDayId +
+                ", startTime='" + startTime + '\'' +
+                ", endTime='" + endTime + '\'' +
+                ", numberId='" + numberId + '\'' +
+                ", breakStartTime='" + breakStartTime + '\'' +
+                ", breakEndTime='" + breakEndTime + '\'' +
+                '}';
     }
 }

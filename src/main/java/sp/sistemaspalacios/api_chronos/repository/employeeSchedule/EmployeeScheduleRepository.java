@@ -7,6 +7,7 @@ import org.springframework.stereotype.Repository;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
 import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeScheduleDay;
 
+import java.time.LocalDate;
 import java.util.Date;
 import java.util.List;
 
@@ -85,6 +86,19 @@ public interface EmployeeScheduleRepository extends JpaRepository<EmployeeSchedu
                                            @Param("endDate")   java.time.LocalDate endDate);
 
 
+
+
+    @Query("SELECT es FROM EmployeeSchedule es WHERE " +
+            "es.employeeId = :employeeId AND " +
+            "es.shift.id = :shiftId AND " +
+            "es.startDate = :startDate AND " +
+            "((es.endDate IS NULL AND :endDate IS NULL) OR es.endDate = :endDate)")
+    List<EmployeeSchedule> findDuplicateAssignments(
+            @Param("employeeId") Long employeeId,
+            @Param("shiftId") Long shiftId,
+            @Param("startDate") LocalDate startDate,
+            @Param("endDate") LocalDate endDate
+    );
 
 }
 

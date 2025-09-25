@@ -6,7 +6,9 @@ public class TimeBlockDependencyDTO {
     private String startTime;
     private String endTime;
     private Integer dependencyId;
-    private Long numberId; // ← AGREGAR ESTA LÍNEA
+    private Long numberId;
+    private String breakStartTime;
+    private String breakEndTime;
 
     // Constructores
     public TimeBlockDependencyDTO() {}
@@ -35,6 +37,22 @@ public class TimeBlockDependencyDTO {
         this.employeeScheduleDayId = employeeScheduleDayId;
     }
 
+    public String getBreakEndTime() {
+        return breakEndTime;
+    }
+
+    public void setBreakEndTime(String breakEndTime) {
+        this.breakEndTime = breakEndTime;
+    }
+
+    public String getBreakStartTime() {
+        return breakStartTime;
+    }
+
+    public void setBreakStartTime(String breakStartTime) {
+        this.breakStartTime = breakStartTime;
+    }
+
     public String getStartTime() {
         return startTime;
     }
@@ -59,8 +77,8 @@ public class TimeBlockDependencyDTO {
         this.dependencyId = dependencyId;
     }
 
-    // ← AGREGAR ESTOS MÉTODOS GETTER Y SETTER PARA numberId
-    public Long getNumberId() {
+    // Getter y Setter para numberId - CORREGIDO para ser consistente
+    public Long getNumberId() {  // CAMBIADO: ahora devuelve Long en lugar de String
         return numberId;
     }
 
@@ -76,7 +94,9 @@ public class TimeBlockDependencyDTO {
                 ", startTime='" + startTime + '\'' +
                 ", endTime='" + endTime + '\'' +
                 ", dependencyId=" + dependencyId +
-                ", numberId=" + numberId + // ← AGREGAR ESTA LÍNEA
+                ", numberId=" + numberId +
+                ", breakStartTime='" + breakStartTime + '\'' +
+                ", breakEndTime='" + breakEndTime + '\'' +
                 '}';
     }
 }

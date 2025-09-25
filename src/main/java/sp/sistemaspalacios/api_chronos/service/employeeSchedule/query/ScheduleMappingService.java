@@ -117,6 +117,12 @@ public class ScheduleMappingService {
         blockMap.put("startTime", block.getStartTime().toString());
         blockMap.put("endTime", block.getEndTime().toString());
         blockMap.put("numberId", block.getEmployeeScheduleDay().getEmployeeSchedule().getEmployeeId());
+        if (block.getBreakStartTime() != null) {
+            blockMap.put("breakStartTime", block.getBreakStartTime().toString());
+        }
+        if (block.getBreakEndTime() != null) {
+            blockMap.put("breakEndTime", block.getBreakEndTime().toString());
+        }
         return blockMap;
     }
 

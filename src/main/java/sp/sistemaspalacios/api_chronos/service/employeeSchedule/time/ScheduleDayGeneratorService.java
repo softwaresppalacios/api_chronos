@@ -32,11 +32,46 @@ public class ScheduleDayGeneratorService {
         this.timeService = timeService;
     }
 
+
+    private static LocalDate toLocalDate(Date date) {
+        if (date == null) return null;
+        if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
+        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
+    private Time safeTimeValueOf(String timeString, String defaultTime) {
+        if (timeString == null || timeString.trim().isEmpty()) {
+            return Time.valueOf(defaultTime);
+        }
+        try {
+            // ✅ Normalizar primero
+            String normalized = normalizeTimeString(timeString.trim());
+
+            // ✅ Si normalizeTimeForDatabase devolvió algo con milisegundos, quitarlos
+            if (normalized.contains(".")) {
+                normalized = normalized.substring(0, normalized.indexOf("."));
+            }
+
+            return Time.valueOf(normalized);
+        } catch (IllegalArgumentException e) {
+            System.err.println("WARNING: Invalid time format '" + timeString + "', using default " + defaultTime);
+            return Time.valueOf(defaultTime);
+        }
+    }
+
+
+    private String normalizeTimeForDatabase(String time) {
+        return timeService.normalizeTimeForDatabase(time);
+    }
+
+
+
     public void generateScheduleDaysWithHolidayDecisions(EmployeeSchedule schedule, List<ScheduleDto.HolidayDecision> holidayDecisions) {
         if (schedule.getDays() == null) schedule.setDays(new ArrayList<>());
         else schedule.getDays().clear();
+
         LocalDate startDate = schedule.getStartDate();
-        LocalDate endDate   = (schedule.getEndDate() != null) ? schedule.getEndDate() : startDate;
+        LocalDate endDate = (schedule.getEndDate() != null) ? schedule.getEndDate() : startDate;
 
         if (startDate == null) throw new IllegalStateException("StartDate es requerido");
         if (endDate == null) endDate = startDate;
@@ -86,47 +121,89 @@ public class ScheduleDayGeneratorService {
             // PASO 3: crear día
             EmployeeScheduleDay day = new EmployeeScheduleDay();
             day.setEmployeeSchedule(schedule);
-            day.setDate(java.sql.Date.valueOf(d));            // ← LocalDate -> java.sql.Date
+            day.setDate(java.sql.Date.valueOf(d));
             day.setDayOfWeek(d.getDayOfWeek().getValue());
             day.setCreatedAt(new Date());
             day.setTimeBlocks(new ArrayList<>());
 
+            System.out.println("Procesando día: " + d + " (festivo: " + holidayService.isHoliday(d) + ")");
+
+            // ✅ Procesar cada ShiftDetail completamente aislado
             for (ShiftDetail sd : details) {
                 if (sd.getDayOfWeek() == null || !Objects.equals(sd.getDayOfWeek(), d.getDayOfWeek().getValue())) continue;
                 if (sd.getStartTime() == null || sd.getEndTime() == null) continue;
 
-                String finalStartTime = sd.getStartTime();
-                String finalEndTime   = sd.getEndTime();
+                // ✅ Variables locales DENTRO del loop - cada bloque es independiente
+                String blockStartTime = sd.getStartTime();
+                String blockEndTime = sd.getEndTime();
 
-                if (decision != null && decision.getShiftSegments() != null) {
+                System.out.println("  ShiftDetail original: " + blockStartTime + " - " + blockEndTime);
+
+                // ✅ Solo si hay decisión de festivo Y hay segmentos definidos
+                if (decision != null && decision.getShiftSegments() != null && !decision.getShiftSegments().isEmpty()) {
+                    String currentSegmentName = determineSegmentName(sd.getStartTime());
+                    System.out.println("  Buscando segmento: " + currentSegmentName);
+
+                    // Buscar si hay un segmento que coincida con este bloque específico
                     for (Object segmentObj : decision.getShiftSegments()) {
                         if (!(segmentObj instanceof Map)) continue;
+
                         @SuppressWarnings("unchecked")
                         Map<String, Object> seg = (Map<String, Object>) segmentObj;
-
                         String segName = stringOf(seg.get("segmentName"));
-                        String expected = determineSegmentName(sd.getStartTime());
 
-                        if (equalsIgnoreCaseNoAccents(segName, expected)) {
-                            String s = stringOf(seg.get("startTime"));
-                            String e = stringOf(seg.get("endTime"));
-                            if (!isBlank(s)) finalStartTime = s;
-                            if (!isBlank(e)) finalEndTime = e;
+                        // Solo modificar SI el nombre del segmento coincide
+                        if (equalsIgnoreCaseNoAccents(segName, currentSegmentName)) {
+                            String customStart = stringOf(seg.get("startTime"));
+                            String customEnd = stringOf(seg.get("endTime"));
+
+                            // Solo aplicar si los valores personalizados existen
+                            if (!isBlank(customStart)) blockStartTime = customStart;
+                            if (!isBlank(customEnd)) blockEndTime = customEnd;
+
+                            System.out.println("  → Aplicando segmento '" + segName + "': " + blockStartTime + "-" + blockEndTime);
                             break;
                         }
                     }
                 }
 
-                String sStr = normalizeTimeForDatabase(finalStartTime);
-                String eStr = normalizeTimeForDatabase(finalEndTime);
+                // ✅ Normalizar y crear el TimeBlock
+                String sStr = normalizeTimeString(blockStartTime);
+                String eStr = normalizeTimeString(blockEndTime);
 
-                Time startTime = safeTimeValueOf(sStr, "08:00:00");
-                Time endTime   = safeTimeValueOf(eStr, "17:00:00");
+                System.out.println("  → Strings normalizados: '" + sStr + "' - '" + eStr + "'");
+
+                Time startTime = Time.valueOf(sStr);
+                Time endTime = Time.valueOf(eStr);
+
+                System.out.println("  → Creando TimeBlock: " + startTime + " - " + endTime);
 
                 EmployeeScheduleTimeBlock tb = new EmployeeScheduleTimeBlock();
                 tb.setEmployeeScheduleDay(day);
                 tb.setStartTime(startTime);
                 tb.setEndTime(endTime);
+
+                // ✅ AGREGAR MANEJO DE BREAKS - COPIAR DESDE ShiftDetail
+                if (sd.getBreakStartTime() != null && !sd.getBreakStartTime().trim().isEmpty()) {
+                    try {
+                        String normalizedBreakStart = normalizeTimeString(sd.getBreakStartTime());
+                        tb.setBreakStartTime(Time.valueOf(normalizedBreakStart));
+                        System.out.println("  → Break start copiado: " + normalizedBreakStart);
+                    } catch (Exception e) {
+                        System.err.println("  → Error procesando breakStartTime: " + e.getMessage());
+                    }
+                }
+
+                if (sd.getBreakEndTime() != null && !sd.getBreakEndTime().trim().isEmpty()) {
+                    try {
+                        String normalizedBreakEnd = normalizeTimeString(sd.getBreakEndTime());
+                        tb.setBreakEndTime(Time.valueOf(normalizedBreakEnd));
+                        System.out.println("  → Break end copiado: " + normalizedBreakEnd);
+                    } catch (Exception e) {
+                        System.err.println("  → Error procesando breakEndTime: " + e.getMessage());
+                    }
+                }
+
                 tb.setCreatedAt(new Date());
 
                 day.getTimeBlocks().add(tb);
@@ -135,36 +212,30 @@ public class ScheduleDayGeneratorService {
             schedule.getDays().add(day);
         }
     }
-
-    // ==== Helpers ====
-
-    private static LocalDate toLocalDate(Date date) {
-        if (date == null) return null;
-        if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
-        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
-    }
-
-    private Time safeTimeValueOf(String timeString, String defaultTime) {
-        if (timeString == null || timeString.trim().isEmpty()) {
-            return Time.valueOf(defaultTime);
-        }
-        try {
-            String normalizedTime = normalizeTimeString(timeString.trim());
-            return Time.valueOf(normalizedTime);
-        } catch (IllegalArgumentException e) {
-            System.err.println("WARNING: Invalid time format '" + timeString + "', using default " + defaultTime);
-            return Time.valueOf(defaultTime);
-        }
-    }
-
+    // ✅ Método de normalización simplificado
     private String normalizeTimeString(String timeStr) {
         if (timeStr == null || timeStr.trim().isEmpty()) return "00:00:00";
+
         timeStr = timeStr.trim();
+
+        // Quitar milisegundos si existen
+        if (timeStr.contains(".")) {
+            timeStr = timeStr.substring(0, timeStr.indexOf("."));
+        }
+
+        // Ya tiene formato HH:mm:ss
         if (timeStr.matches("\\d{2}:\\d{2}:\\d{2}")) return timeStr;
+
+        // Formato HH:mm -> agregar :00
         if (timeStr.matches("\\d{2}:\\d{2}")) return timeStr + ":00";
+
+        // Formato H:mm -> agregar 0 al inicio y :00
         if (timeStr.matches("\\d{1}:\\d{2}")) return "0" + timeStr + ":00";
+
         return "00:00:00";
     }
+
+// ==== Métodos auxiliares existentes (mantener como están) ====
 
     private static boolean equalsIgnoreCaseNoAccents(String a, String b){
         if (a == null || b == null) return false;
@@ -186,7 +257,4 @@ public class ScheduleDayGeneratorService {
 
     private static String stringOf(Object o){ return o==null? null : o.toString(); }
     private static boolean isBlank(String s){ return s==null || s.trim().isEmpty(); }
-    private String normalizeTimeForDatabase(String time) {
-        return timeService.normalizeTimeForDatabase(time);
-    }
 }
