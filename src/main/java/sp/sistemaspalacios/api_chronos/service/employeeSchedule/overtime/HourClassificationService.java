@@ -198,43 +198,51 @@ public class HourClassificationService {
         int totalMinutes = (endMinutes > startMinutes) ?
                 (endMinutes - startMinutes) :
                 (1440 - startMinutes + endMinutes);
-        // CONFIGURACIÓN NOCTURNA: 19:00 (1140 min) hasta 06:00 (360 min)
-        int nightStart = 19 * 60;  // 19:00 = 1140 minutos
+
+        // ✅ USAR CONFIGURACIÓN en lugar de hardcodear
+        int nightStart = nightStartMinutes;  // Usar el parámetro configurado
         int nightEnd = 6 * 60;     // 06:00 = 360 minutos
 
         int nightMinutes = 0;
         int dayMinutes = 0;
 
-        // Verificar si el rango completo está en horario diurno (06:00 - 19:00)
-        if (startMinutes >= nightEnd && endMinutes <= nightStart) {
+        System.out.println("🔍 DEBUG - Clasificando horario:");
+        System.out.println("  - Rango: " + (startMinutes/60) + ":" + String.format("%02d", startMinutes%60) +
+                " - " + (endMinutes/60) + ":" + String.format("%02d", endMinutes%60));
+        System.out.println("  - Límite nocturno configurado: " + (nightStart/60) + ":" + String.format("%02d", nightStart%60));
+
+        // ✅ LÓGICA CORREGIDA
+        if (startMinutes >= nightStart || endMinutes <= nightEnd) {
+            // Completamente nocturno
+            nightMinutes = totalMinutes;
+            dayMinutes = 0;
+            System.out.println("  - Resultado: COMPLETAMENTE NOCTURNO (" + (nightMinutes/60.0) + "h)");
+
+        } else if (startMinutes >= nightEnd && endMinutes <= nightStart) {
             // Completamente diurno
             dayMinutes = totalMinutes;
             nightMinutes = 0;
+            System.out.println("  - Resultado: COMPLETAMENTE DIURNO (" + (dayMinutes/60.0) + "h)");
 
-        } else if ((startMinutes >= nightStart && endMinutes >= nightStart) ||
-                (startMinutes <= nightEnd && endMinutes <= nightEnd)) {
-            // Completamente nocturno (19:00-23:59 o 00:00-06:00)
-            dayMinutes = 0;
-            nightMinutes = totalMinutes;
         } else {
-            // Calcular la parte diurna
-            if (startMinutes < nightStart && endMinutes > nightEnd) {
-                if (endMinutes <= nightStart) {
-                    // Caso: inicia antes de 19:00 y termina antes de 19:00
-                    dayMinutes = totalMinutes;
-                } else {
-                    // Caso: cruza el inicio de la noche
-                    dayMinutes = nightStart - Math.max(startMinutes, nightEnd);
-                    nightMinutes = totalMinutes - dayMinutes;
-                }
+            // Dividir entre diurno y nocturno
+            if (startMinutes < nightStart && endMinutes > nightStart) {
+                // Cruza el inicio de la noche
+                dayMinutes = nightStart - startMinutes;
+                nightMinutes = totalMinutes - dayMinutes;
+            } else if (startMinutes < nightEnd && endMinutes > nightEnd) {
+                // Cruza el fin de la noche
+                nightMinutes = nightEnd - startMinutes;
+                dayMinutes = totalMinutes - nightMinutes;
             } else {
-                // Para otros casos complejos, usar cálculo conservador
+                // Caso por defecto
                 dayMinutes = totalMinutes;
             }
+            System.out.println("  - Resultado: MIXTO - Diurno: " + (dayMinutes/60.0) + "h, Nocturno: " + (nightMinutes/60.0) + "h");
         }
+
         return new int[]{dayMinutes, nightMinutes};
     }
-
     /**
      * Encuentra la mejor coincidencia en tipos disponibles
      */

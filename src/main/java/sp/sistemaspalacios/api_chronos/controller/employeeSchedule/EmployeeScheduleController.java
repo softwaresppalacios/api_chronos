@@ -1042,7 +1042,29 @@ public class EmployeeScheduleController {
     }
 
 
+    @GetMapping("/daily-breakdown-filtered/{employeeId}")
+    public ResponseEntity<Map<String, Object>> getDailyBreakdownFiltered(@PathVariable Long employeeId) {
+        try {
+            Map<String, Object> breakdown = employeeScheduleService.getDailyBreakdownFiltered(employeeId);
+            return ResponseEntity.ok(breakdown);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error obteniendo breakdown filtrado: " + e.getMessage()));
+        }
+    }
 
+    @GetMapping("/turn-breakdown/{employeeId}/{groupId}")
+    public ResponseEntity<Map<String, Object>> getTurnBreakdown(
+            @PathVariable Long employeeId,
+            @PathVariable Long groupId) {
+        try {
+            Map<String, Object> breakdown = employeeScheduleService.getTurnBreakdown(employeeId, groupId);
+            return ResponseEntity.ok(breakdown);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error obteniendo breakdown de turno: " + e.getMessage()));
+        }
+    }
 
     @PutMapping("/time-blocks/{id}")
     public ResponseEntity<Map<String, Object>> updateTimeBlock(

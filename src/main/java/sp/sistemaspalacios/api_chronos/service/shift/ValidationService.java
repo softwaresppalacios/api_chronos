@@ -351,13 +351,15 @@ public class ValidationService {
                 // Ahora "Tarde" puede finalizar en horas de noche
                 break;
             case "Noche":
-                // Debe empezar desde NIGHT_START o cruzar medianoche
-                if (!crossesMidnight && start.isBefore(nightStart)) {
+                // CAMBIO: Permitir turnos de noche desde las 19:00, no desde la jornada nocturna laboral
+                LocalTime turnNightStart = LocalTime.of(19, 0); // 7:00 PM para turnos
+
+                // Debe empezar desde las 19:00 o cruzar medianoche
+                if (!crossesMidnight && start.isBefore(turnNightStart)) {
                     throw new IllegalArgumentException(
-                            "Noche debe comenzar a partir de " + formatAmPm(nightStart) + " o cruzar medianoche");
+                            "Noche debe comenzar a partir de " + formatAmPm(turnNightStart) + " o cruzar medianoche");
                 }
                 break;
-
             default:
                 // sin restricciones especiales
         }

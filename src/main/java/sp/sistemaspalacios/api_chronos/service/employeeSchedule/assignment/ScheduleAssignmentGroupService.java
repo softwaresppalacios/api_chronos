@@ -77,8 +77,6 @@ public class ScheduleAssignmentGroupService {
         groupRepository.deleteById(groupId);
     }
 
-    // REEMPLAZAR el método getAllScheduleGroupsWithFilters en ScheduleAssignmentGroupService
-
     public List<ScheduleAssignmentGroupDTO> getAllScheduleGroupsWithFilters(
             String status, String shiftName, Long employeeId,
             LocalDate startDate, LocalDate endDate) {
@@ -136,7 +134,6 @@ public class ScheduleAssignmentGroupService {
 
     // 🔹 CONVERSIÓN RÁPIDA SIN CÁLCULOS DE HORAS COMPLEJOS
     private ScheduleAssignmentGroupDTO convertToFastDTO(ScheduleAssignmentGroup group, String shiftNameFilter) {
-        // Usar datos existentes del grupo (pueden estar un poco desactualizados pero son rápidos)
         ScheduleAssignmentGroupDTO dto = new ScheduleAssignmentGroupDTO();
 
         dto.setId(group.getId());
@@ -146,7 +143,7 @@ public class ScheduleAssignmentGroupService {
         dto.setEmployeeScheduleIds(group.getEmployeeScheduleIds());
         dto.setStatus(calculateEffectiveStatus(group));
 
-        // Usar totales ya calculados de la BD (rápido)
+        // Usar totales ya calculados de la BD
         dto.setTotalHours(group.getTotalHours() != null ? group.getTotalHours() : BigDecimal.ZERO);
         dto.setRegularHours(group.getRegularHours() != null ? group.getRegularHours() : BigDecimal.ZERO);
         dto.setOvertimeHours(group.getOvertimeHours() != null ? group.getOvertimeHours() : BigDecimal.ZERO);
@@ -156,14 +153,12 @@ public class ScheduleAssignmentGroupService {
         dto.setOvertimeType(group.getOvertimeType());
         dto.setFestivoType(group.getFestivoType());
 
-        // Crear breakdown básico
-        Map<String, Object> breakdown = new HashMap<>();
-        breakdown.put("total_diurna", dto.getRegularHours().doubleValue());
-        breakdown.put("total_nocturna", dto.getOvertimeHours().doubleValue());
-        dto.setOvertimeBreakdown(breakdown);
+        // ✅ CORRECCIÓN: Usar breakdown REAL en lugar de inventado
+        List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
+        Map<String, BigDecimal> hoursByType = hourClassificationService.classifyScheduleHours(schedules);
+        dto.setOvertimeBreakdown(createBreakdown(hoursByType));
 
         // AGREGAR NOMBRE DEL TURNO
-        List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
         if (!schedules.isEmpty() && schedules.get(0).getShift() != null) {
             String shiftName = getShiftDisplayName(schedules.get(0).getShift());
             dto.setShiftName(shiftName != null ? shiftName : "Sin turno");
@@ -171,18 +166,16 @@ public class ScheduleAssignmentGroupService {
             dto.setShiftName("Sin turno");
         }
 
-        // SOLO cargar schedule details si realmente se necesitan (para filtro de turno)
+        // SOLO cargar schedule details si realmente se necesitan
         if (needsScheduleDetails(shiftNameFilter)) {
-            // Aplicar filtro de turno
             if (shiftNameFilter != null && !shiftNameFilter.trim().isEmpty() && !"TODOS".equalsIgnoreCase(shiftNameFilter)) {
                 schedules = schedules.stream()
                         .filter(s -> matchesShiftName(s, shiftNameFilter.trim()))
                         .collect(Collectors.toList());
 
-                if (schedules.isEmpty()) return null; // Filtrar este grupo
+                if (schedules.isEmpty()) return null;
             }
 
-            // Crear detalles básicos
             List<ScheduleDetailDTO> details = schedules.stream()
                     .map(this::createBasicScheduleDetail)
                     .collect(Collectors.toList());
@@ -192,8 +185,7 @@ public class ScheduleAssignmentGroupService {
         }
 
         return dto;
-    }
-    private boolean needsScheduleDetails(String shiftNameFilter) {
+    }    private boolean needsScheduleDetails(String shiftNameFilter) {
         return shiftNameFilter != null && !shiftNameFilter.trim().isEmpty() && !"TODOS".equalsIgnoreCase(shiftNameFilter);
     }
 
@@ -344,22 +336,26 @@ public class ScheduleAssignmentGroupService {
             }
         });
 
+        // ✅ CORRECCIÓN: Usar streams en lugar de lambdas con variables mutables
         BigDecimal totalDiurna = hoursByType.entrySet().stream()
-                .filter(e -> e.getKey().contains("_DIURNA"))
+                .filter(entry -> entry.getKey().contains("_DIURNA"))
                 .map(Map.Entry::getValue)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         BigDecimal totalNocturna = hoursByType.entrySet().stream()
-                .filter(e -> e.getKey().contains("_NOCTURNA"))
+                .filter(entry -> entry.getKey().contains("_NOCTURNA"))
                 .map(Map.Entry::getValue)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         breakdown.put("total_diurna", totalDiurna.doubleValue());
         breakdown.put("total_nocturna", totalNocturna.doubleValue());
 
+        System.out.println("🔍 BREAKDOWN GENERADO:");
+        System.out.println("  total_diurna: " + totalDiurna.doubleValue());
+        System.out.println("  total_nocturna: " + totalNocturna.doubleValue());
+
         return breakdown;
     }
-
     private ScheduleAssignmentGroupDTO convertGroupToDTO(ScheduleAssignmentGroup group) {
         List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
         Map<String, BigDecimal> hoursByType = hourClassificationService.classifyScheduleHours(schedules);

@@ -13,7 +13,6 @@ import sp.sistemaspalacios.api_chronos.service.employeeSchedule.holiday.HolidayE
 import java.sql.Time;
 import java.text.Normalizer;
 import java.time.LocalDate;
-import java.time.ZoneId;               // <-- IMPORT NECESARIO
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -31,39 +30,6 @@ public class ScheduleDayGeneratorService {
         this.holidayExemptionService = holidayExemptionService;
         this.timeService = timeService;
     }
-
-
-    private static LocalDate toLocalDate(Date date) {
-        if (date == null) return null;
-        if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
-        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
-    }
-
-    private Time safeTimeValueOf(String timeString, String defaultTime) {
-        if (timeString == null || timeString.trim().isEmpty()) {
-            return Time.valueOf(defaultTime);
-        }
-        try {
-            // ✅ Normalizar primero
-            String normalized = normalizeTimeString(timeString.trim());
-
-            // ✅ Si normalizeTimeForDatabase devolvió algo con milisegundos, quitarlos
-            if (normalized.contains(".")) {
-                normalized = normalized.substring(0, normalized.indexOf("."));
-            }
-
-            return Time.valueOf(normalized);
-        } catch (IllegalArgumentException e) {
-            System.err.println("WARNING: Invalid time format '" + timeString + "', using default " + defaultTime);
-            return Time.valueOf(defaultTime);
-        }
-    }
-
-
-    private String normalizeTimeForDatabase(String time) {
-        return timeService.normalizeTimeForDatabase(time);
-    }
-
 
 
     public void generateScheduleDaysWithHolidayDecisions(EmployeeSchedule schedule, List<ScheduleDto.HolidayDecision> holidayDecisions) {
@@ -90,35 +56,41 @@ public class ScheduleDayGeneratorService {
         for (LocalDate d = startDate; !d.isAfter(endDate); d = d.plusDays(1)) {
             ScheduleDto.HolidayDecision decision = decisionMap.get(d);
 
-            // PASO 1: exenciones
-            if (decision != null) {
-                try {
-                    if (decision.getExemptionReason() != null && !decision.getExemptionReason().isBlank()) {
-                        holidayExemptionService.saveExemption(
-                                schedule.getEmployeeId(), d, holidayService.getHolidayName(d),
-                                decision.getExemptionReason(), null
-                        );
-                    } else if (!decision.isApplyHolidayCharge()) {
-                        holidayExemptionService.saveExemption(
-                                schedule.getEmployeeId(), d, holidayService.getHolidayName(d),
-                                "NO_APLICAR_RECARGO", null
-                        );
-                    }
-                } catch (Exception e) {
-                    System.err.println("Error guardando exención de festivo: " + e.getMessage());
-                    e.printStackTrace();
+            // ✅ CAMBIO: NO GUARDAR EXENCIONES - Solo verificar si debe saltarse el día
+            // COMENTADO: Ya no guardamos exenciones globales
+        /*
+        if (decision != null) {
+            try {
+                if (decision.getExemptionReason() != null && !decision.getExemptionReason().isBlank()) {
+                    holidayExemptionService.saveExemption(
+                            schedule.getEmployeeId(), d, holidayService.getHolidayName(d),
+                            decision.getExemptionReason(), null
+                    );
+                } else if (!decision.isApplyHolidayCharge()) {
+                    holidayExemptionService.saveExemption(
+                            schedule.getEmployeeId(), d, holidayService.getHolidayName(d),
+                            "NO_APLICAR_RECARGO", null
+                    );
                 }
+            } catch (Exception e) {
+                System.err.println("Error guardando excención de festivo: " + e.getMessage());
+                e.printStackTrace();
             }
+        }
+        */
 
-            // PASO 2: ¿se crea el día?
+            // PASO 2: Verificar si se debe saltar la creación del día (sin guardar exenciones)
             boolean skipDayCreation = decision != null &&
                     decision.getExemptionReason() != null &&
                     !decision.getExemptionReason().isBlank() &&
                     !decision.isApplyHolidayCharge();
 
-            if (skipDayCreation) continue;
+            if (skipDayCreation) {
+                System.out.println("⏭️ Saltando día " + d + " (empleado no trabaja este festivo)");
+                continue; // Simplemente no crear el día para este turno
+            }
 
-            // PASO 3: crear día
+            // PASO 3: crear día normalmente
             EmployeeScheduleDay day = new EmployeeScheduleDay();
             day.setEmployeeSchedule(schedule);
             day.setDate(java.sql.Date.valueOf(d));
@@ -128,18 +100,18 @@ public class ScheduleDayGeneratorService {
 
             System.out.println("Procesando día: " + d + " (festivo: " + holidayService.isHoliday(d) + ")");
 
-            // ✅ Procesar cada ShiftDetail completamente aislado
+            // Procesar cada ShiftDetail completamente aislado
             for (ShiftDetail sd : details) {
                 if (sd.getDayOfWeek() == null || !Objects.equals(sd.getDayOfWeek(), d.getDayOfWeek().getValue())) continue;
                 if (sd.getStartTime() == null || sd.getEndTime() == null) continue;
 
-                // ✅ Variables locales DENTRO del loop - cada bloque es independiente
+                // Variables locales DENTRO del loop - cada bloque es independiente
                 String blockStartTime = sd.getStartTime();
                 String blockEndTime = sd.getEndTime();
 
                 System.out.println("  ShiftDetail original: " + blockStartTime + " - " + blockEndTime);
 
-                // ✅ Solo si hay decisión de festivo Y hay segmentos definidos
+                // Solo si hay decisión de festivo Y hay segmentos definidos
                 if (decision != null && decision.getShiftSegments() != null && !decision.getShiftSegments().isEmpty()) {
                     String currentSegmentName = determineSegmentName(sd.getStartTime());
                     System.out.println("  Buscando segmento: " + currentSegmentName);
@@ -167,7 +139,7 @@ public class ScheduleDayGeneratorService {
                     }
                 }
 
-                // ✅ Normalizar y crear el TimeBlock
+                // Normalizar y crear el TimeBlock
                 String sStr = normalizeTimeString(blockStartTime);
                 String eStr = normalizeTimeString(blockEndTime);
 
@@ -183,7 +155,7 @@ public class ScheduleDayGeneratorService {
                 tb.setStartTime(startTime);
                 tb.setEndTime(endTime);
 
-                // ✅ AGREGAR MANEJO DE BREAKS - COPIAR DESDE ShiftDetail
+                // AGREGAR MANEJO DE BREAKS - COPIAR DESDE ShiftDetail
                 if (sd.getBreakStartTime() != null && !sd.getBreakStartTime().trim().isEmpty()) {
                     try {
                         String normalizedBreakStart = normalizeTimeString(sd.getBreakStartTime());
@@ -205,15 +177,13 @@ public class ScheduleDayGeneratorService {
                 }
 
                 tb.setCreatedAt(new Date());
-
                 day.getTimeBlocks().add(tb);
             }
 
             schedule.getDays().add(day);
         }
     }
-    // ✅ Método de normalización simplificado
-    private String normalizeTimeString(String timeStr) {
+        private String normalizeTimeString(String timeStr) {
         if (timeStr == null || timeStr.trim().isEmpty()) return "00:00:00";
 
         timeStr = timeStr.trim();
@@ -235,7 +205,6 @@ public class ScheduleDayGeneratorService {
         return "00:00:00";
     }
 
-// ==== Métodos auxiliares existentes (mantener como están) ====
 
     private static boolean equalsIgnoreCaseNoAccents(String a, String b){
         if (a == null || b == null) return false;

@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import sp.sistemaspalacios.api_chronos.dto.employee.EmployeeHoursSummaryDTO;
 import sp.sistemaspalacios.api_chronos.dto.employee.EmployeeScheduleDTO;
+import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleAssignmentGroupDTO;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.AssignmentRequest;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.AssignmentResult;
 import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDto.HolidayConfirmationRequest;
@@ -15,6 +16,7 @@ import sp.sistemaspalacios.api_chronos.exception.ResourceNotFoundException;
 import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleRepository;
 import sp.sistemaspalacios.api_chronos.repository.shift.ShiftsRepository;
 import sp.sistemaspalacios.api_chronos.service.boundaries.holiday.HolidayService;
+import sp.sistemaspalacios.api_chronos.service.employeeSchedule.assignment.ScheduleAssignmentGroupService;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.assignment.ScheduleAssignmentService;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.holiday.HolidayExemptionService;
 import sp.sistemaspalacios.api_chronos.service.employeeSchedule.overtime.HourClassificationService;
@@ -44,6 +46,9 @@ public class EmployeeScheduleService {
     private final HolidayService holidayService;
     private final HolidayExemptionService holidayExemptionService;
     private final HourClassificationService hourClassificationService;
+
+    private final ScheduleAssignmentGroupService groupService;
+
     public EmployeeScheduleService(
             EmployeeScheduleRepository employeeScheduleRepository,
             ShiftsRepository shiftsRepository,
@@ -54,7 +59,8 @@ public class EmployeeScheduleService {
             ScheduleCalculationService scheduleCalculationService,
             TimeBlockService timeBlockService, HolidayService holidayService,
             HolidayExemptionService holidayExemptionService,
-            HourClassificationService hourClassificationService
+            HourClassificationService hourClassificationService,
+            ScheduleAssignmentGroupService groupService
     ) {
         this.employeeScheduleRepository = employeeScheduleRepository;
         this.shiftsRepository = shiftsRepository;
@@ -67,6 +73,7 @@ public class EmployeeScheduleService {
         this.holidayService = holidayService;
         this.holidayExemptionService = holidayExemptionService;
         this.hourClassificationService = hourClassificationService;
+        this.groupService = groupService;
     }
 
     public AssignmentResult processMultipleAssignments(AssignmentRequest request) {
@@ -366,12 +373,135 @@ public class EmployeeScheduleService {
         }
     }
 
-// AGREGAR ESTOS MÉTODOS AUXILIARES AL FINAL DE LA CLASE EmployeeScheduleService
 
-    /**
-     * Determina si un bloque de tiempo específico contiene horas especiales
-     */
-    private boolean isTimeBlockSpecial(String startTime, String endTime, LocalDate date, Long employeeId) {
+
+    public Map<String, Object> getTurnBreakdown(Long employeeId, Long groupId) {
+        try {
+            // Obtener grupo específico
+            ScheduleAssignmentGroupDTO group = groupService.getGroupById(groupId);
+
+            if (group == null) {
+                return new HashMap<>();
+            }
+
+            Map<String, Object> breakdown = new HashMap<>();
+            breakdown.put("groupId", groupId);
+            breakdown.put("shiftName", group.getShiftName());
+            breakdown.put("regularHours", group.getRegularHours());
+            breakdown.put("overtimeHours", group.getOvertimeHours());
+            breakdown.put("festivoHours", group.getFestivoHours());
+            breakdown.put("totalHours", group.getTotalHours());
+            breakdown.put("overtimeBreakdown", group.getOvertimeBreakdown());
+
+            return breakdown;
+
+        } catch (Exception e) {
+            System.err.println("Error obteniendo breakdown de turno: " + e.getMessage());
+            return new HashMap<>();
+        }
+    }
+
+
+
+    public Map<String, Object> getDailyBreakdownFiltered(Long employeeId) {
+        try {
+            // Obtener resumen consolidado
+            EmployeeHoursSummaryDTO summary = calculateEmployeeHoursSummary(employeeId);
+
+            // Obtener schedules
+            List<EmployeeScheduleDTO> schedules = getCompleteSchedulesByEmployeeId(employeeId);
+
+            // Clasificar todos los schedules juntos
+            List<EmployeeSchedule> allScheduleEntities = schedules.stream()
+                    .map(dto -> employeeScheduleRepository.findById(dto.getId()).orElse(null))
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            Map<String, BigDecimal> completeClassification = hourClassificationService.classifyScheduleHours(allScheduleEntities);
+
+            List<Map<String, Object>> dailyDetails = new ArrayList<>();
+
+            // NUEVO: Solo procesar días que REALMENTE tienen timeBlocks válidos
+            for (EmployeeScheduleDTO schedule : schedules) {
+                Map<String, Object> days = (Map<String, Object>) schedule.getDays();
+                List<Map<String, Object>> dayItems = (List<Map<String, Object>>) days.get("items");
+
+                for (Map<String, Object> day : dayItems) {
+                    String dateStr = (String) day.get("date");
+                    LocalDate date = LocalDate.parse(dateStr);
+
+                    // FILTRO 1: Solo días con timeBlocks válidos
+                    List<Map<String, Object>> timeBlocks = (List<Map<String, Object>>) day.get("timeBlocks");
+                    if (timeBlocks == null || timeBlocks.isEmpty()) {
+                        continue; // Saltar días sin horarios
+                    }
+
+                    // FILTRO 2: Calcular horas reales del día
+                    double totalDayHours = 0.0;
+                    List<Map<String, Object>> blockDetails = new ArrayList<>();
+
+                    for (Map<String, Object> block : timeBlocks) {
+                        String startTime = (String) block.get("startTime");
+                        String endTime = (String) block.get("endTime");
+                        double blockHours = calculateHours(startTime, endTime);
+                        totalDayHours += blockHours;
+
+                        Map<String, Object> blockDetail = new HashMap<>();
+                        blockDetail.put("startTime", startTime.substring(0, 5));
+                        blockDetail.put("endTime", endTime.substring(0, 5));
+                        blockDetail.put("hours", blockHours);
+                        blockDetails.add(blockDetail);
+                    }
+
+                    // FILTRO 3: Solo incluir si tiene horas > 0
+                    if (totalDayHours > 0) {
+                        // Determinar tipo de día
+                        String dayType = determineBlockType(
+                                timeBlocks.get(0).get("startTime").toString(),
+                                timeBlocks.get(0).get("endTime").toString(),
+                                date,
+                                employeeId
+                        );
+
+                        Map<String, Object> dayDetail = new HashMap<>();
+                        dayDetail.put("date", dateStr);
+                        dayDetail.put("dayOfWeek", date.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.forLanguageTag("es")));
+                        dayDetail.put("shiftName", schedule.getShiftName());
+                        dayDetail.put("hourType", dayType);
+                        dayDetail.put("totalHours", totalDayHours);
+                        dayDetail.put("timeBlocks", blockDetails);
+
+                        // Información adicional
+                        if (holidayService.isHoliday(date)) {
+                            dayDetail.put("isHoliday", true);
+                            dayDetail.put("holidayName", holidayService.getHolidayName(date));
+                        }
+
+                        dailyDetails.add(dayDetail);
+                    }
+                }
+            }
+
+            // Respuesta completa
+            Map<String, Object> response = new HashMap<>();
+            response.put("employeeId", employeeId);
+            response.put("employeeName", employeeDataService.getEmployeeName(employeeId));
+            response.put("totalHours", summary.getTotalHours());
+            response.put("regularHours", summary.getRegularHours());
+            response.put("overtimeHours", summary.getOvertimeHours());
+            response.put("festivoHours", summary.getFestivoHours());
+            response.put("overtimeType", summary.getOvertimeType());
+            response.put("festivoType", summary.getFestivoType());
+            response.put("dailyDetails", dailyDetails);
+
+            return response;
+
+        } catch (Exception e) {
+            throw new RuntimeException("Error obteniendo breakdown diario filtrado", e);
+        }
+    }
+
+        private boolean isTimeBlockSpecial(String startTime, String endTime, LocalDate date, Long employeeId) {
 
         // 1. Verificar si es festivo
         if (holidayService.isHoliday(date)) {
@@ -414,14 +544,29 @@ public class EmployeeScheduleService {
 
         // Verificar si es festivo
         if (holidayService.isHoliday(date)) {
+            // También verificar si el festivo es en horario nocturno
+            try {
+                int startHour = Integer.parseInt(startTime.split(":")[0]);
+                int endHour = Integer.parseInt(endTime.split(":")[0]);
+
+                // Si empieza a las 19:00 o después, O termina a las 19:00 o después
+                if (startHour >= 19 || endHour >= 19) {
+                    return "FESTIVO_NOCTURNA";
+                }
+            } catch (Exception e) {
+                // Error parsing, asumir diurno
+            }
             return "FESTIVO_DIURNA";
         }
 
-        // Verificar si es horario nocturno (19:00+)
+        // Verificar si es horario nocturno (19:00 a 23:59)
         try {
             int startHour = Integer.parseInt(startTime.split(":")[0]);
-            if (startHour >= 19) {
-                return "EXTRA_NOCTURNA"; // Segundo turno nocturno
+            int endHour = Integer.parseInt(endTime.split(":")[0]);
+
+            // Si empieza a las 19:00 o después, O termina a las 19:00 o después
+            if (startHour >= 19 || endHour >= 19) {
+                return "EXTRA_NOCTURNA";
             }
         } catch (Exception e) {
             // Error parsing
@@ -432,6 +577,6 @@ public class EmployeeScheduleService {
             return "DOMINICAL_DIURNA";
         }
 
-        return "REGULAR_DIURNA"; // Por defecto (no debería llegar aquí)
+        return "REGULAR_DIURNA"; // Por defecto
     }
 }
