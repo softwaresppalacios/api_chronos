@@ -27,4 +27,6 @@ public class EmployeeAttendance {
 
     private Boolean isLate;
     private String message;
+
+
 }
