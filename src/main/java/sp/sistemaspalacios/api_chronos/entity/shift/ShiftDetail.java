@@ -52,3 +52,4 @@ public class ShiftDetail {
     @Temporal(TemporalType.TIMESTAMP)
     private Date updatedAt;
 }
+
