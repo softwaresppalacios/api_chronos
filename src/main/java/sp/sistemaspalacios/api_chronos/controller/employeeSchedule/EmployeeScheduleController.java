@@ -35,7 +35,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @RestController
-@RequestMapping("/api/employee-schedules")
+@RequestMapping("/employee-schedules")
 public class EmployeeScheduleController {
 
     private final EmployeeScheduleService employeeScheduleService;

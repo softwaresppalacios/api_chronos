@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/holiday-exemptions")
+@RequestMapping("/holiday-exemptions")
 public class HolidayExemptionController {
 
     private final HolidayExemptionService holidayExemptionService;

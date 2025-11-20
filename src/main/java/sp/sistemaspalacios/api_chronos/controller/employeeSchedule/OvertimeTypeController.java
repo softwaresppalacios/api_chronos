@@ -13,7 +13,7 @@ import sp.sistemaspalacios.api_chronos.service.employeeSchedule.overtime.Overtim
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/overtime-types")
+@RequestMapping("/overtime-types")
 @RequiredArgsConstructor
 public class OvertimeTypeController {
 

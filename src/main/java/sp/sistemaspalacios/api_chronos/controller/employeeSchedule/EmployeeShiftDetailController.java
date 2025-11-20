@@ -11,7 +11,7 @@ import java.util.Map;
 
 @RestController
 
-@RequestMapping("/api/employee-shift-details")
+@RequestMapping("/employee-shift-details")
 public class EmployeeShiftDetailController {
 
     private final EmployeeShiftDetailService employeeShiftDetailService;

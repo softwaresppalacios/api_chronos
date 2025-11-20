@@ -11,7 +11,7 @@ import java.util.Map;
 
 @RestController
 
-@RequestMapping("/api/shifts")
+@RequestMapping("/shifts")
 public class ShiftsController {
 
     private final ShiftsService shiftsService;
