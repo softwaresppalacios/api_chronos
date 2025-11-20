@@ -1,4 +1,4 @@
-package sp.sistemaspalacios.api_chronos.dto;
+package sp.sistemaspalacios.api_chronos.dto.employee;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 

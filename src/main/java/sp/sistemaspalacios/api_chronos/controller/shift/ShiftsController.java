@@ -1,6 +1,5 @@
 package sp.sistemaspalacios.api_chronos.controller.shift;
 
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import sp.sistemaspalacios.api_chronos.entity.shift.Shifts;
@@ -11,12 +10,15 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/shifts")
+
+@RequestMapping("/shifts")
 public class ShiftsController {
 
-    @Autowired
-    private ShiftsService shiftsService;
+    private final ShiftsService shiftsService;
 
+    public ShiftsController(ShiftsService shiftsService) {
+        this.shiftsService = shiftsService;
+    }
     // Obtener todos los turnos
     @GetMapping
     public ResponseEntity<List<Shifts>> getAllShifts() {
@@ -44,6 +46,14 @@ public class ShiftsController {
 
         return ResponseEntity.ok(shifts);
     }
+
+
+
+
+
+
+
+
 
     // Crear un nuevo turno
     @PostMapping
@@ -87,5 +97,39 @@ public class ShiftsController {
         Shifts shift = shiftsService.findById(id);
         return ResponseEntity.ok(shift);
     }
+
+
+    @GetMapping("/shift/{dependencyId}")
+    public ResponseEntity<List<Shifts>> findByDependencyaId(@PathVariable Long dependencyId) {
+        // Verificar si el ID de la dependencia es válido
+        if (dependencyId == null || dependencyId <= 0) {
+            return ResponseEntity.badRequest().body(null); // Bad request si el ID de dependencia no es válido
+        }
+
+        // Buscar todos los turnos asociados a la dependencia
+        List<Shifts> shifts = shiftsService.findByDependencyId(dependencyId);
+
+        // Si no se encuentran turnos, devolver un 404
+        if (shifts.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // Si se encuentran turnos, devolverlos en la respuesta
+        return ResponseEntity.ok(shifts);
+    }
+
+
+    @GetMapping("/check-outdated")
+    public ResponseEntity<?> checkOutdatedShifts() {
+        try {
+            Map<String, Object> result = shiftsService.checkOutdatedShifts();
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            Map<String, String> error = new HashMap<>();
+            error.put("error", "Error verificando turnos: " + e.getMessage());
+            return ResponseEntity.badRequest().body(error);
+        }
+    }
+
 
 }

@@ -1,5 +1,6 @@
 package sp.sistemaspalacios.api_chronos.entity.shift;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference; // ← AGREGAR
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.CreationTimestamp;
@@ -26,15 +27,17 @@ public class Shifts {
     private Long dependencyId;
 
     @OneToMany(mappedBy = "shift", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
+    @JsonManagedReference  // ← AGREGAR ESTA LÍNEA
     private List<ShiftDetail> shiftDetails;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     @Temporal(TemporalType.TIMESTAMP)
-    @CreationTimestamp  // <-- Agregado para generar automáticamente la fecha de creación
+    @CreationTimestamp
     private Date createdAt;
 
     @Column(name = "updated_at")
     @Temporal(TemporalType.TIMESTAMP)
-    @UpdateTimestamp  // <-- Agregado para actualizar automáticamente la fecha de modificación
+    @UpdateTimestamp
     private Date updatedAt;
 }
+

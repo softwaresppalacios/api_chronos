@@ -1,4 +1,4 @@
-package sp.sistemaspalacios.api_chronos.service.employeeSchedule;
+package sp.sistemaspalacios.api_chronos.service.employeeSchedule.shift;
 
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;

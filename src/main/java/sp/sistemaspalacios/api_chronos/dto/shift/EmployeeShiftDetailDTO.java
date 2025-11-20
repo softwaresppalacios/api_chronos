@@ -1,4 +1,4 @@
-package sp.sistemaspalacios.api_chronos.dto;
+package sp.sistemaspalacios.api_chronos.dto.shift;
 
 import lombok.Data;
 

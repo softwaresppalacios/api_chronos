@@ -1,4 +1,4 @@
-package sp.sistemaspalacios.api_chronos.dto;
+package sp.sistemaspalacios.api_chronos.dto.shift;
 
 import java.util.List;
 
@@ -7,9 +7,11 @@ public class ShiftsDTO {
     private String name;
     private String description;
     private Long timeBreak;
+    private String dependencyName; // <--- AGREGADO AQUÍ
+
     private List<ShiftDetailDTO> shiftDetails;
 
-    public ShiftsDTO(Long id, String name, String description, Long timeBreak, List<ShiftDetailDTO> shiftDetails) {
+    public ShiftsDTO() {
         this.id = id;
         this.name = name;
         this.description = description;

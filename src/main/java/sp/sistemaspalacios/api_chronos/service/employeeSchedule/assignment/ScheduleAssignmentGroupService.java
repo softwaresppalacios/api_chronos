@@ -1,0 +1,697 @@
+package sp.sistemaspalacios.api_chronos.service.employeeSchedule.assignment;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import sp.sistemaspalacios.api_chronos.dto.overtime.OvertimeTypeDTO;
+import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleAssignmentGroupDTO;
+import sp.sistemaspalacios.api_chronos.dto.schedule.ScheduleDetailDTO;
+import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.EmployeeSchedule;
+import sp.sistemaspalacios.api_chronos.entity.employeeSchedule.ScheduleAssignmentGroup;
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.EmployeeScheduleRepository;
+import sp.sistemaspalacios.api_chronos.repository.employeeSchedule.ScheduleAssignmentGroupRepository;
+import sp.sistemaspalacios.api_chronos.service.employeeSchedule.overtime.HourClassificationService;
+import sp.sistemaspalacios.api_chronos.service.employeeSchedule.overtime.OvertimeTypeService;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class ScheduleAssignmentGroupService {
+
+    private final ScheduleAssignmentGroupRepository groupRepository;
+    private final EmployeeScheduleRepository scheduleRepository;
+    private final OvertimeTypeService overtimeTypeService;
+    private final HourClassificationService hourClassificationService;
+
+    private final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd");
+
+
+
+    public List<ScheduleAssignmentGroupDTO> getEmployeeGroups(Long employeeId) {
+        List<ScheduleAssignmentGroup> groups = groupRepository.findByEmployeeId(employeeId);
+        return groups.stream()
+                .peek(this::syncStatusWithDates)
+                .map(this::convertGroupToDTO)
+                .collect(Collectors.toList());
+    }
+
+
+    @Transactional
+    public ScheduleAssignmentGroupDTO getGroupById(Long groupId) {
+        ScheduleAssignmentGroup group = getGroupOrThrow(groupId);
+        syncStatusWithDates(group);
+
+        List<EmployeeSchedule> schedules = scheduleRepository.findAllById(group.getEmployeeScheduleIds());
+        Map<String, BigDecimal> hoursByType = hourClassificationService.classifyScheduleHours(schedules);
+
+        return convertToDTO(group, schedules, hoursByType);
+    }
+
+    @Transactional
+    public ScheduleAssignmentGroupDTO recalculateGroup(Long groupId) {
+        ScheduleAssignmentGroup group = getGroupOrThrow(groupId);
+        List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
+
+        Map<String, BigDecimal> hoursByType = hourClassificationService.classifyScheduleHours(schedules);
+        updateGroupTotalsSimple(group, hoursByType);
+        syncStatusWithDates(group);
+        group = groupRepository.save(group);
+
+        return convertToDTO(group, schedules, hoursByType);
+    }
+
+    @Transactional
+    public void deleteGroup(Long groupId) {
+        if (!groupRepository.existsById(groupId)) {
+            throw new IllegalArgumentException("Grupo no encontrado con ID: " + groupId);
+        }
+        groupRepository.deleteById(groupId);
+    }
+
+    public List<ScheduleAssignmentGroupDTO> getAllScheduleGroupsWithFilters(
+            String status, String shiftName, Long employeeId,
+            LocalDate startDate, LocalDate endDate) {
+
+        // 🔹 NO SINCRONIZAR TODOS - solo filtrar por status actual
+        List<ScheduleAssignmentGroup> allGroups = groupRepository.findAll();
+
+        // 🔹 FILTRADO RÁPIDO SIN CÁLCULOS PESADOS
+        List<ScheduleAssignmentGroup> filteredGroups = allGroups.stream()
+                .filter(group -> filterByStatusFast(group, status))
+                .filter(group -> filterByEmployee(group, employeeId))
+                .filter(group -> filterByDateRange(group, startDate, endDate))
+                .collect(Collectors.toList());
+
+        // 🔹 LIMITAR RESULTADOS PARA EVITAR SOBRECARGA
+        if (filteredGroups.size() > 100) {
+            filteredGroups = filteredGroups.stream()
+                    .limit(100)
+                    .collect(Collectors.toList());
+        }
+
+        // 🔹 PROCESAMIENTO OPTIMIZADO
+        return filteredGroups.stream()
+                .map(group -> {
+                    try {
+                        return convertToFastDTO(group, shiftName);
+                    } catch (Exception e) {
+                        log.error("Error procesando grupo {}: {}", group.getId(), e.getMessage());
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+    }
+
+    // 🔹 MÉTODO RÁPIDO PARA DETERMINAR STATUS SIN ACTUALIZAR BD
+    private boolean filterByStatusFast(ScheduleAssignmentGroup group, String status) {
+        if (status == null || status.trim().isEmpty() || "TODOS".equalsIgnoreCase(status)) {
+            return true;
+        }
+
+        // Calcular status efectivo SIN guardar en BD
+        String effectiveStatus = calculateEffectiveStatus(group);
+        return status.equalsIgnoreCase(effectiveStatus);
+    }
+
+    private String calculateEffectiveStatus(ScheduleAssignmentGroup group) {
+        if (group.getPeriodEnd() == null) return "ACTIVE";
+
+        LocalDate today = LocalDate.now();
+        LocalDate endDate = convertToLocalDate(group.getPeriodEnd());
+
+        return today.isAfter(endDate) ? "INACTIVE" : "ACTIVE";
+    }
+
+    // 🔹 CONVERSIÓN RÁPIDA SIN CÁLCULOS DE HORAS COMPLEJOS
+    private ScheduleAssignmentGroupDTO convertToFastDTO(ScheduleAssignmentGroup group, String shiftNameFilter) {
+        ScheduleAssignmentGroupDTO dto = new ScheduleAssignmentGroupDTO();
+
+        dto.setId(group.getId());
+        dto.setEmployeeId(group.getEmployeeId());
+        dto.setPeriodStart(dateFormat.format(group.getPeriodStart()));
+        dto.setPeriodEnd(dateFormat.format(group.getPeriodEnd()));
+        dto.setEmployeeScheduleIds(group.getEmployeeScheduleIds());
+        dto.setStatus(calculateEffectiveStatus(group));
+
+        // Usar totales ya calculados de la BD
+        dto.setTotalHours(group.getTotalHours() != null ? group.getTotalHours() : BigDecimal.ZERO);
+        dto.setRegularHours(group.getRegularHours() != null ? group.getRegularHours() : BigDecimal.ZERO);
+        dto.setOvertimeHours(group.getOvertimeHours() != null ? group.getOvertimeHours() : BigDecimal.ZERO);
+        dto.setFestivoHours(group.getFestivoHours() != null ? group.getFestivoHours() : BigDecimal.ZERO);
+        dto.setAssignedHours(dto.getRegularHours().add(dto.getFestivoHours()));
+
+        dto.setOvertimeType(group.getOvertimeType());
+        dto.setFestivoType(group.getFestivoType());
+
+        // ✅ CORRECCIÓN: Usar breakdown REAL en lugar de inventado
+        List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
+        Map<String, BigDecimal> hoursByType = hourClassificationService.classifyScheduleHours(schedules);
+        dto.setOvertimeBreakdown(createBreakdown(hoursByType));
+
+        // AGREGAR NOMBRE DEL TURNO
+        if (!schedules.isEmpty() && schedules.get(0).getShift() != null) {
+            String shiftName = getShiftDisplayName(schedules.get(0).getShift());
+            dto.setShiftName(shiftName != null ? shiftName : "Sin turno");
+        } else {
+            dto.setShiftName("Sin turno");
+        }
+
+        // SOLO cargar schedule details si realmente se necesitan
+        if (needsScheduleDetails(shiftNameFilter)) {
+            if (shiftNameFilter != null && !shiftNameFilter.trim().isEmpty() && !"TODOS".equalsIgnoreCase(shiftNameFilter)) {
+                schedules = schedules.stream()
+                        .filter(s -> matchesShiftName(s, shiftNameFilter.trim()))
+                        .collect(Collectors.toList());
+
+                if (schedules.isEmpty()) return null;
+            }
+
+            List<ScheduleDetailDTO> details = schedules.stream()
+                    .map(this::createBasicScheduleDetail)
+                    .collect(Collectors.toList());
+            dto.setScheduleDetails(details);
+        } else {
+            dto.setScheduleDetails(Collections.emptyList());
+        }
+
+        return dto;
+    }    private boolean needsScheduleDetails(String shiftNameFilter) {
+        return shiftNameFilter != null && !shiftNameFilter.trim().isEmpty() && !"TODOS".equalsIgnoreCase(shiftNameFilter);
+    }
+
+    // 🔹 CREACIÓN BÁSICA DE DETALLES SIN CÁLCULOS COMPLEJOS
+    private ScheduleDetailDTO createBasicScheduleDetail(EmployeeSchedule schedule) {
+        ScheduleDetailDTO detail = new ScheduleDetailDTO();
+
+        detail.setScheduleId(schedule.getId());
+        detail.setStartDate(dateFormat.format(schedule.getStartDate()));
+        detail.setEndDate(dateFormat.format(schedule.getEndDate() != null ? schedule.getEndDate() : schedule.getStartDate()));
+
+        if (schedule.getShift() != null) {
+            detail.setShiftId(schedule.getShift().getId());
+            String name = getShiftDisplayName(schedule.getShift());
+            detail.setShiftName((name != null && !name.isBlank()) ? name : "Turno #" + schedule.getShift().getId());
+        } else {
+            detail.setShiftName("Sin turno");
+        }
+
+        // Valores por defecto - se calcularán bajo demanda si es necesario
+        detail.setHoursInPeriod(0.0);
+        detail.setRegularHours(0.0);
+        detail.setOvertimeHours(0.0);
+        detail.setFestivoHours(0.0);
+        detail.setOvertimeType(null);
+        detail.setFestivoType(null);
+        detail.setOvertimeBreakdown(new HashMap<>());
+
+        return detail;
+    }
+
+    public List<Map<String, String>> getAvailableStatuses() {
+        List<String> uniqueStatuses = groupRepository.findAll().stream()
+                .map(this::getEffectiveStatus)
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+
+        List<Map<String, String>> statusOptions = new ArrayList<>();
+        statusOptions.add(Map.of("label", "Todos", "value", "TODOS"));
+
+        Map<String, String> statusLabels = Map.of(
+                "ACTIVE", "Activos",
+                "INACTIVE", "Inactivos"
+        );
+
+        uniqueStatuses.forEach(status -> {
+            statusOptions.add(Map.of(
+                    "label", statusLabels.getOrDefault(status, status),
+                    "value", status
+            ));
+        });
+
+        return statusOptions;
+    }
+
+    public ScheduleDetailDTO createScheduleDetailWithCalculation(EmployeeSchedule schedule) {
+        ScheduleDetailDTO detail = new ScheduleDetailDTO();
+
+        detail.setScheduleId(schedule.getId());
+
+        // ✅ CORRECCIÓN: Usar formateo seguro para LocalDate
+        try {
+            if (schedule.getStartDate() != null) {
+                detail.setStartDate(schedule.getStartDate().toString()); // LocalDate.toString() -> "yyyy-MM-dd"
+            }
+            if (schedule.getEndDate() != null) {
+                detail.setEndDate(schedule.getEndDate().toString());
+            } else if (schedule.getStartDate() != null) {
+                detail.setEndDate(schedule.getStartDate().toString());
+            }
+        } catch (Exception e) {
+            System.err.println("Error formateando fechas: " + e.getMessage());
+            detail.setStartDate("-");
+            detail.setEndDate("-");
+        }
+
+        // Configurar información del turno (resto sin cambios)
+        if (schedule.getShift() != null) {
+            detail.setShiftId(schedule.getShift().getId());
+            String name = getShiftDisplayName(schedule.getShift());
+            detail.setShiftName((name != null && !name.isBlank()) ? name : "Turno #" + schedule.getShift().getId());
+        } else {
+            detail.setShiftName("Sin turno");
+        }
+
+        // Resto del método sin cambios...
+        Map<String, BigDecimal> hoursByType = hourClassificationService.classifyScheduleHours(Collections.singletonList(schedule));
+
+        BigDecimal regularHours = sumHoursByPrefix(hoursByType, "REGULAR_");
+        BigDecimal overtimeHours = sumHoursByPrefix(hoursByType, "EXTRA_").add(sumHoursByPrefix(hoursByType, "DOMINICAL_"));
+        BigDecimal festivoHours = sumHoursByPrefix(hoursByType, "FESTIVO_");
+        BigDecimal totalHours = regularHours.add(overtimeHours);
+
+        detail.setHoursInPeriod(totalHours.doubleValue());
+        detail.setRegularHours(regularHours.doubleValue());
+        detail.setOvertimeHours(overtimeHours.doubleValue());
+        detail.setFestivoHours(festivoHours.doubleValue());
+        detail.setOvertimeType(findPredominantType(hoursByType, Arrays.asList("EXTRA_", "DOMINICAL_")));
+        detail.setFestivoType(findPredominantType(hoursByType, Arrays.asList("FESTIVO_")));
+        detail.setOvertimeBreakdown(createBreakdown(hoursByType));
+
+        return detail;
+    }
+
+
+    private void updateGroupTotalsSimple(ScheduleAssignmentGroup group, Map<String, BigDecimal> hoursByType) {
+        BigDecimal regularHours = sumHoursByPrefix(hoursByType, "REGULAR_");
+        BigDecimal overtimeHours = sumHoursByPrefix(hoursByType, "EXTRA_")
+                .add(sumHoursByPrefix(hoursByType, "DOMINICAL_"));
+        BigDecimal festivoHours = sumHoursByPrefix(hoursByType, "FESTIVO_");
+
+        // ✅ CORRECCIÓN: Total incluye festivos sin duplicar
+        BigDecimal totalHours = regularHours.add(overtimeHours).add(festivoHours);
+
+        group.setRegularHours(regularHours.setScale(2, RoundingMode.HALF_UP));
+        group.setOvertimeHours(overtimeHours.setScale(2, RoundingMode.HALF_UP));
+        group.setFestivoHours(festivoHours.setScale(2, RoundingMode.HALF_UP));
+        group.setTotalHours(totalHours.setScale(2, RoundingMode.HALF_UP));
+        group.setOvertimeType(findPredominantType(hoursByType, Arrays.asList("EXTRA_", "DOMINICAL_")));
+        group.setFestivoType(findPredominantType(hoursByType, Arrays.asList("FESTIVO_")));
+    }
+    private BigDecimal sumHoursByPrefix(Map<String, BigDecimal> hoursByType, String prefix) {
+        return hoursByType.entrySet().stream()
+                .filter(e -> e.getKey().startsWith(prefix))
+                .map(Map.Entry::getValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private String findPredominantType(Map<String, BigDecimal> hoursByType, List<String> prefixes) {
+        Map<String, String> codeToName = overtimeTypeService.getAllActiveTypes().stream()
+                .collect(Collectors.toMap(OvertimeTypeDTO::getCode, OvertimeTypeDTO::getDisplayName));
+
+        return hoursByType.entrySet().stream()
+                .filter(e -> prefixes.stream().anyMatch(p -> e.getKey().startsWith(p)))
+                .filter(e -> e.getValue().compareTo(BigDecimal.ZERO) > 0)
+                .max(Map.Entry.comparingByValue())
+                .map(e -> codeToName.getOrDefault(e.getKey(), e.getKey()))
+                .orElse(null);
+    }
+
+    private Map<String, Object> createBreakdown(Map<String, BigDecimal> hoursByType) {
+        Map<String, Object> breakdown = new HashMap<>();
+
+        hoursByType.forEach((k, v) -> {
+            if (v.compareTo(BigDecimal.ZERO) > 0) {
+                breakdown.put(k, v.doubleValue());
+            }
+        });
+
+        // ✅ CORRECCIÓN: Usar streams en lugar de lambdas con variables mutables
+        BigDecimal totalDiurna = hoursByType.entrySet().stream()
+                .filter(entry -> entry.getKey().contains("_DIURNA"))
+                .map(Map.Entry::getValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal totalNocturna = hoursByType.entrySet().stream()
+                .filter(entry -> entry.getKey().contains("_NOCTURNA"))
+                .map(Map.Entry::getValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        breakdown.put("total_diurna", totalDiurna.doubleValue());
+        breakdown.put("total_nocturna", totalNocturna.doubleValue());
+
+        System.out.println("🔍 BREAKDOWN GENERADO:");
+        System.out.println("  total_diurna: " + totalDiurna.doubleValue());
+        System.out.println("  total_nocturna: " + totalNocturna.doubleValue());
+
+        return breakdown;
+    }
+    private ScheduleAssignmentGroupDTO convertGroupToDTO(ScheduleAssignmentGroup group) {
+        List<EmployeeSchedule> schedules = scheduleRepository.findAllByIdWithShift(group.getEmployeeScheduleIds());
+        Map<String, BigDecimal> hoursByType = hourClassificationService.classifyScheduleHours(schedules);
+        return convertToDTO(group, schedules, hoursByType);
+    }
+
+    private ScheduleAssignmentGroupDTO convertToDTO(ScheduleAssignmentGroup group,
+                                                    List<EmployeeSchedule> schedules,
+                                                    Map<String, BigDecimal> hoursByType) {
+        ScheduleAssignmentGroupDTO dto = new ScheduleAssignmentGroupDTO();
+        System.out.println("=== DIAGNÓSTICO HORAS ===");
+        System.out.println("Employee ID: " + group.getEmployeeId());
+        hoursByType.forEach((key, value) -> {
+            if (value.compareTo(BigDecimal.ZERO) > 0) {
+                System.out.println(key + ": " + value);
+            }
+        });
+        System.out.println("========================");
+
+        dto.setId(group.getId());
+        dto.setEmployeeId(group.getEmployeeId());
+        dto.setPeriodStart(dateFormat.format(group.getPeriodStart()));
+        dto.setPeriodEnd(dateFormat.format(group.getPeriodEnd()));
+        dto.setEmployeeScheduleIds(group.getEmployeeScheduleIds());
+        dto.setStatus(getEffectiveStatus(group));
+
+        // Calcular totales directamente
+        BigDecimal regularHours = sumHoursByPrefix(hoursByType, "REGULAR_");
+        BigDecimal overtimeHours = sumHoursByPrefix(hoursByType, "EXTRA_")
+                .add(sumHoursByPrefix(hoursByType, "DOMINICAL_"));
+        BigDecimal festivoHours = sumHoursByPrefix(hoursByType, "FESTIVO_");
+
+        // ✅ CORRECCIÓN: Total = regular + overtime + festivo (sin duplicar)
+        BigDecimal totalHours = regularHours.add(overtimeHours).add(festivoHours);
+
+        // ✅ assignedHours = solo las horas base trabajadas (regular + festivo)
+        // Pero NO duplicadas porque festivo ya está en totalHours
+        BigDecimal assignedHours = regularHours.add(festivoHours);
+
+        dto.setTotalHours(totalHours.setScale(2, RoundingMode.HALF_UP));
+        dto.setRegularHours(regularHours.setScale(2, RoundingMode.HALF_UP));
+        dto.setOvertimeHours(overtimeHours.setScale(2, RoundingMode.HALF_UP));
+        dto.setFestivoHours(festivoHours.setScale(2, RoundingMode.HALF_UP));
+        dto.setAssignedHours(assignedHours.setScale(2, RoundingMode.HALF_UP));
+        dto.setOvertimeType(findPredominantType(hoursByType, Arrays.asList("EXTRA_", "DOMINICAL_")));
+        dto.setFestivoType(findPredominantType(hoursByType, Arrays.asList("FESTIVO_")));
+
+        dto.setOvertimeBreakdown(createBreakdown(hoursByType));
+
+        List<ScheduleDetailDTO> details = schedules.stream()
+                .map(this::createScheduleDetailWithCalculation)
+                .collect(Collectors.toList());
+        dto.setScheduleDetails(details);
+
+        return dto;
+    }
+    private boolean filterByEmployee(ScheduleAssignmentGroup group, Long employeeId) {
+        return employeeId == null || Objects.equals(group.getEmployeeId(), employeeId);
+    }
+
+    private boolean filterByDateRange(ScheduleAssignmentGroup group, LocalDate startDate, LocalDate endDate) {
+        if (startDate == null && endDate == null) return true;
+
+        LocalDate groupStart = convertToLocalDate(group.getPeriodStart());
+        LocalDate groupEnd = convertToLocalDate(group.getPeriodEnd());
+
+        if (startDate != null && endDate == null) {
+            return !groupEnd.isBefore(startDate);
+        }
+        if (startDate == null) {
+            return !groupStart.isAfter(endDate);
+        }
+        return !groupStart.isAfter(endDate) && !groupEnd.isBefore(startDate);
+    }
+
+    private boolean matchesShiftName(EmployeeSchedule schedule, String shiftName) {
+        String displayName = getShiftDisplayName(schedule.getShift());
+        return displayName != null && shiftName.equalsIgnoreCase(displayName.trim());
+    }
+
+    // ===== MÉTODOS DE UTILIDAD =====
+
+    private ScheduleAssignmentGroup getGroupOrThrow(Long groupId) {
+        return groupRepository.findById(groupId)
+                .orElseThrow(() -> new IllegalArgumentException("Grupo no encontrado con ID: " + groupId));
+    }
+
+    @Transactional
+    private void syncStatusWithDates(ScheduleAssignmentGroup group) {
+        String effective = getEffectiveStatus(group);
+        if (!Objects.equals(group.getStatus(), effective)) {
+            group.setStatus(effective);
+            groupRepository.save(group);
+        }
+    }
+
+    private String getEffectiveStatus(ScheduleAssignmentGroup group) {
+        if (group.getPeriodEnd() == null) return "ACTIVE";
+
+        LocalDate today = LocalDate.now();
+        LocalDate endDate = convertToLocalDate(group.getPeriodEnd());
+
+        return today.isAfter(endDate) ? "INACTIVE" : "ACTIVE";
+    }
+
+    private String getShiftDisplayName(sp.sistemaspalacios.api_chronos.entity.shift.Shifts shift) {
+        if (shift == null) return null;
+        try {
+            String name = shift.getName();
+            if (name != null && !name.isBlank()) return name;
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    private LocalDate convertToLocalDate(Date date) {
+        if (date == null) return null;
+        if (date instanceof java.sql.Date) return ((java.sql.Date) date).toLocalDate();
+        return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+    }
+
+
+    @Transactional
+    public ScheduleAssignmentGroupDTO processScheduleAssignment(Long employeeId, List<Long> scheduleIds) {
+        if (employeeId == null) throw new IllegalArgumentException("Employee ID no puede ser nulo");
+        if (scheduleIds == null || scheduleIds.isEmpty()) {
+            throw new IllegalArgumentException("Lista de schedule IDs no puede estar vacía");
+        }
+
+        try {
+            List<EmployeeSchedule> schedules = scheduleRepository.findAllById(scheduleIds);
+            if (schedules.isEmpty()) {
+                throw new IllegalArgumentException("No se encontraron schedules con los IDs proporcionados");
+            }
+            LocalDate startL = null;
+            LocalDate endL = null;
+
+            for (EmployeeSchedule schedule : schedules) {
+                if (schedule.getStartDate() != null) {
+                    if (startL == null || schedule.getStartDate().isBefore(startL)) {
+                        startL = schedule.getStartDate();
+                    }
+
+                    LocalDate scheduleEnd = (schedule.getEndDate() != null) ?
+                            schedule.getEndDate() : schedule.getStartDate();
+
+                    if (endL == null || scheduleEnd.isAfter(endL)) {
+                        endL = scheduleEnd;
+                    }
+                }
+            }
+
+            if (startL == null || endL == null) {
+                System.err.println("Error: No se pudieron determinar las fechas del período");
+                throw new IllegalArgumentException("No se pudieron determinar las fechas del período");
+            }
+            java.sql.Date startDate = java.sql.Date.valueOf(startL);
+            java.sql.Date endDate = java.sql.Date.valueOf(endL);
+            ScheduleAssignmentGroup group = findOrCreateGroupSafe(employeeId, scheduleIds, startDate, endDate);
+            if (group == null) {
+                throw new RuntimeException("No se pudo crear o encontrar el grupo");
+            }
+            Map<String, BigDecimal> hoursByType = new HashMap<>();
+            try {
+                List<EmployeeSchedule> allSchedules = scheduleRepository.findAllById(group.getEmployeeScheduleIds());
+                hoursByType = hourClassificationService.classifyScheduleHours(allSchedules);
+            } catch (Exception e) {
+                System.err.println("Error calculando horas: " + e.getMessage());
+                e.printStackTrace();
+                // Continuar con valores por defecto
+                hoursByType = new HashMap<>();
+            }
+
+            // Actualizar totales de forma segura
+            updateGroupTotalsSafe(group, hoursByType);
+            syncStatusWithDates(group);
+
+            group = groupRepository.save(group);
+            return convertToDTO(group, schedules, hoursByType);
+
+        } catch (Exception e) {
+            System.err.println("ERROR en processScheduleAssignment: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Error processing group for employee " + employeeId, e);
+        }
+    }
+
+    // MÉTODO SEGURO para encontrar/crear grupo
+    private ScheduleAssignmentGroup findOrCreateGroupSafe(Long employeeId, List<Long> scheduleIds,
+                                                          java.sql.Date startDate, java.sql.Date endDate) {
+        try {
+            // Buscar grupo existente
+            List<ScheduleAssignmentGroup> existingGroups = groupRepository.findByEmployeeId(employeeId);
+
+            for (ScheduleAssignmentGroup existing : existingGroups) {
+                if (existing.getPeriodStart() != null && existing.getPeriodEnd() != null) {
+                    if (hasDateOverlapSafe(startDate, endDate, existing.getPeriodStart(), existing.getPeriodEnd())) {
+                        return updateExistingGroupSafe(existing, scheduleIds, startDate, endDate);
+                    }
+                }
+            }
+            return createNewGroupSafe(employeeId, scheduleIds, startDate, endDate);
+
+        } catch (Exception e) {
+            System.err.println("Error en findOrCreateGroupSafe: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Error creating/finding group", e);
+        }
+    }
+
+    // MÉTODO SEGURO para verificar solapamiento de fechas
+    private boolean hasDateOverlapSafe(java.sql.Date start1, java.sql.Date end1,
+                                       Date start2, Date end2) {
+        try {
+            if (start1 == null || end1 == null || start2 == null || end2 == null) {
+                return false;
+            }
+
+            LocalDate s1 = start1.toLocalDate();
+            LocalDate e1 = end1.toLocalDate();
+            LocalDate s2 = convertToLocalDateSafe(start2);
+            LocalDate e2 = convertToLocalDateSafe(end2);
+
+            if (s2 == null || e2 == null) {
+                return false;
+            }
+
+            return !s1.isAfter(e2) && !s2.isAfter(e1);
+
+        } catch (Exception e) {
+            System.err.println("Error verificando solapamiento: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // CONVERSIÓN SEGURA de Date a LocalDate
+    private LocalDate convertToLocalDateSafe(Date date) {
+        if (date == null) return null;
+
+        try {
+            if (date instanceof java.sql.Date) {
+                return ((java.sql.Date) date).toLocalDate();
+            }
+            return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+        } catch (Exception e) {
+            System.err.println("Error convirtiendo fecha: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // MÉTODO SEGURO para actualizar grupo existente
+    private ScheduleAssignmentGroup updateExistingGroupSafe(ScheduleAssignmentGroup group,
+                                                            List<Long> scheduleIds,
+                                                            java.sql.Date startDate,
+                                                            java.sql.Date endDate) {
+        try {
+            // Agregar nuevos schedule IDs
+            if (group.getEmployeeScheduleIds() == null) {
+                group.setEmployeeScheduleIds(new ArrayList<>());
+            }
+
+            for (Long id : scheduleIds) {
+                if (!group.getEmployeeScheduleIds().contains(id)) {
+                    group.getEmployeeScheduleIds().add(id);
+                }
+            }
+
+            // Expandir rango de fechas si es necesario
+            if (group.getPeriodStart() == null || startDate.before(group.getPeriodStart())) {
+                group.setPeriodStart(startDate);
+            }
+            if (group.getPeriodEnd() == null || endDate.after(group.getPeriodEnd())) {
+                group.setPeriodEnd(endDate);
+            }
+
+            return group;
+
+        } catch (Exception e) {
+            System.err.println("Error actualizando grupo existente: " + e.getMessage());
+            throw new RuntimeException("Error updating existing group", e);
+        }
+    }
+
+    // MÉTODO SEGURO para crear nuevo grupo
+    private ScheduleAssignmentGroup createNewGroupSafe(Long employeeId, List<Long> scheduleIds,
+                                                       java.sql.Date startDate, java.sql.Date endDate) {
+        try {
+            ScheduleAssignmentGroup group = new ScheduleAssignmentGroup();
+            group.setEmployeeId(employeeId);
+            group.setPeriodStart(startDate);
+            group.setPeriodEnd(endDate);
+            group.setEmployeeScheduleIds(new ArrayList<>(scheduleIds));
+            group.setStatus("ACTIVE"); // Estado por defecto
+
+            // Inicializar valores por defecto
+            group.setTotalHours(BigDecimal.ZERO);
+            group.setRegularHours(BigDecimal.ZERO);
+            group.setOvertimeHours(BigDecimal.ZERO);
+            group.setFestivoHours(BigDecimal.ZERO);
+
+            return group;
+
+        } catch (Exception e) {
+            System.err.println("Error creando nuevo grupo: " + e.getMessage());
+            throw new RuntimeException("Error creating new group", e);
+        }
+    }
+
+    // MÉTODO SEGURO para actualizar totales
+    private void updateGroupTotalsSafe(ScheduleAssignmentGroup group, Map<String, BigDecimal> hoursByType) {
+        try {
+            if (hoursByType == null) {
+                hoursByType = new HashMap<>();
+            }
+
+            BigDecimal regularHours = sumHoursByPrefix(hoursByType, "REGULAR_");
+            BigDecimal overtimeHours = sumHoursByPrefix(hoursByType, "EXTRA_")
+                    .add(sumHoursByPrefix(hoursByType, "DOMINICAL_"));
+            BigDecimal festivoHours = sumHoursByPrefix(hoursByType, "FESTIVO_");
+            BigDecimal totalHours = regularHours.add(overtimeHours);
+
+            group.setRegularHours(regularHours.setScale(2, RoundingMode.HALF_UP));
+            group.setOvertimeHours(overtimeHours.setScale(2, RoundingMode.HALF_UP));
+            group.setFestivoHours(festivoHours.setScale(2, RoundingMode.HALF_UP));
+            group.setTotalHours(totalHours.setScale(2, RoundingMode.HALF_UP));
+
+            group.setOvertimeType(findPredominantType(hoursByType, Arrays.asList("EXTRA_", "DOMINICAL_")));
+            group.setFestivoType(findPredominantType(hoursByType, Arrays.asList("FESTIVO_")));
+        } catch (Exception e) {
+            System.err.println("Error actualizando totales: " + e.getMessage());
+            e.printStackTrace();
+            // Establecer valores por defecto en caso de error
+            group.setRegularHours(BigDecimal.ZERO);
+            group.setOvertimeHours(BigDecimal.ZERO);
+            group.setFestivoHours(BigDecimal.ZERO);
+            group.setTotalHours(BigDecimal.ZERO);
+        }
+    }
+
+}
